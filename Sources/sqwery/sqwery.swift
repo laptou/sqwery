@@ -9,7 +9,7 @@ public protocol QueryKeyPredicate: Equatable {
   associatedtype Key: QueryKey
 
   func matches(key: Key) -> Bool
-  func contains(other: Self) -> Bool
+  func conflicts(other: Self) -> Bool
 }
 
 public extension QueryKeyPredicate {
@@ -25,7 +25,7 @@ public struct AllQueries<K>: QueryKeyPredicate, Equatable where K: QueryKey {
     true
   }
 
-  public func contains(other _: Self) -> Bool {
+  public func conflicts(other _: Self) -> Bool {
     true
   }
 
@@ -45,17 +45,39 @@ public enum StatusUpdate {
 @available(iOS 14.0, *)
 var logger = Logger(subsystem: "me.abiodun.sqwery", category: "sqwery")
 
+
+// NSCache can only use keys that implement NSObject
+final class WrappedKey<K>: NSObject where K: Hashable & Equatable {
+  let key: K
+  
+  init(_ key: K) { self.key = key }
+  
+  override var hash: Int { return key.hashValue }
+  
+  override func isEqual(_ object: Any?) -> Bool {
+    guard let value = object as? WrappedKey else {
+      return false
+    }
+    
+    return value.key == key
+  }
+}
+
 @MainActor
 @available(iOS 16.0, *)
 public class QueryClient<Key> where Key: QueryKey {
-  private let queryCache: MemoryStorage<Key, QueryState<Key>>
-  private let mutationCache: MemoryStorage<MutationId<Key>, MutationState<Key>>
+  /// Enables or disables automatically refreshing queries. Useful to disable this for previews.
+  public var autoRefresh: Bool = true
+  
+  private let queryCache: NSCache<WrappedKey<Key>, QueryState<Key>>
+  private let mutationCache: NSCache<WrappedKey<MutationId<Key>>, MutationState<Key>>
   private var queryConfigurers: [(matches: (Key) -> Bool, equals: (any QueryKeyPredicate) -> Bool, configurer: QueryConfigurer<Key>)] = []
   private var mutationConfigurers: [(matches: (Key) -> Bool, equals: (any QueryKeyPredicate) -> Bool, configurer: MutationConfigurer<Key>)] = []
 
   private var notifications: NotificationCenter = .init()
   private var queryUsers: [Key: Int] = [:]
   private var queryTasks: [Key: Task<Void, Never>] = [:]
+  private var mutationKeys: Set<MutationId<Key>> = []
   private var mutationTasks: [MutationId<Key>: Task<Void, Never>] = [:]
   private var mutationNextId: [Key: Int] = [:]
 
@@ -63,8 +85,10 @@ public class QueryClient<Key> where Key: QueryKey {
   public var defaultMutationConfig: MutationConfig<Key> = MutationConfig()
 
   public init() {
-    queryCache = MemoryStorage(config: MemoryConfig())
-    mutationCache = MemoryStorage(config: MemoryConfig())
+    queryCache = NSCache()
+    queryCache.evictsObjectsWithDiscardedContent = true
+    mutationCache = NSCache()
+    mutationCache.evictsObjectsWithDiscardedContent = true
   }
 
   func buildQueryConfig(for key: Key) -> QueryConfig<Key> {
@@ -99,11 +123,21 @@ public class QueryClient<Key> where Key: QueryKey {
     }
 
     if queryUsers[key]! > 0, !queryTasks.keys.contains(key) {
+      let state = queryState(for: key)
+      
       // we went from zero observers for this query to not-zero, start a task
-      queryTasks[key] = Task { @MainActor [weak self] in
+      let task = Task { @MainActor [weak self] in
         guard let self else { return }
         await runQuery(key: key)
+        
+        // when the task exits (due to cancellation, for example) deregister it
+        queryTasks.removeValue(forKey: key)
+        notifyQueryReset(for: key)
       }
+      
+      // store the task in the query state so that it gets cancelled when NSCache evicts it
+      state.task = task
+      queryTasks[key] = task
     }
   }
 
@@ -165,6 +199,7 @@ public class QueryClient<Key> where Key: QueryKey {
 
             continue
           }
+
         } catch is CancellationError {
           currentState.dataStatus = .idle
           logger.log(level: .debug, "query \(String(describing: key)) pending -> idle (cancelled)")
@@ -179,7 +214,19 @@ public class QueryClient<Key> where Key: QueryKey {
       case .success:
         // if we've entered success state for any reason, clear retry count
         currentState.retryCount = 0
-
+        
+        // if we have success and auto refresh is disabled, do nothing
+        if !autoRefresh {
+          var iter = notifications.notifications(named: queryDidChange)
+          // Notification is not Sendable, so we map the iterator even though we're not using the objects
+            .map { $0.object as! QueryUpdate }
+            .filter { $0.key == key }
+            .makeAsyncIterator()
+          let _ = await iter.next()
+          
+          continue
+        }
+        
         do {
           // in success state? sleep until stale time, then retry
           if !currentState.forceRefetch {
@@ -193,7 +240,7 @@ public class QueryClient<Key> where Key: QueryKey {
           } else {
             logger.log(level: .debug, "query \(String(describing: key)) force refetch")
           }
-          
+
           // in success and refreshing? kick off our query,
           // but don't change the state until we get results back
           let runner = currentState.config.run
@@ -284,7 +331,7 @@ public class QueryClient<Key> where Key: QueryKey {
         }
       }
 
-      queryCache.setObject(currentState, forKey: key)
+      queryCache.setObject(currentState, forKey: WrappedKey(key))
     }
   }
 
@@ -298,12 +345,15 @@ public class QueryClient<Key> where Key: QueryKey {
 
         if let runner {
           currentState.dataStatus = .pending
+          // prevent NSCache from evicting our mutation and cancelling the task while it's running
+          currentState.beginContentAccess()
           logger.log(level: .debug, "mutation \(String(describing: id)) idle -> pending")
           notifications.post(name: mutationDidChange, object: MutationUpdate(mutationId: id, update: .began))
-          
+
           let result = try await Task.detached { try await runner(id.key, param) }.value
+          currentState.endContentAccess()
           currentState.dataStatus = .success(result)
-          
+
           logger.log(level: .debug, "mutation \(String(describing: id)) pending -> success")
           notifications.post(name: mutationDidChange, object: MutationUpdate(mutationId: id, update: .succeeded(result)))
 
@@ -339,8 +389,7 @@ public class QueryClient<Key> where Key: QueryKey {
   func notifyQueryReset(for key: Key) {
     notifications.post(name: queryDidChange, object: QueryUpdate(key: key, update: .reset))
   }
-  
-  
+
   func getNextMutationId(for key: Key) -> Int {
     if let id = mutationNextId[key] {
       mutationNextId[key]! += 1
@@ -362,7 +411,7 @@ public class QueryClient<Key> where Key: QueryKey {
   public func configureQueries<P>(for predicate: P, configurer: @escaping (inout QueryConfig<Key>) -> Void) where P: QueryKeyPredicate, P.Key == Key {
     queryConfigurers.removeAll(where: { _, equals, _ in equals(predicate) })
     queryConfigurers.append(
-      ({ predicate.matches(key: $0) }, { predicate == $0 as! P }, configurer)
+      ({ predicate.matches(key: $0) }, { predicate == $0 as? P }, configurer)
     )
 
     invalidateQueries(for: predicate)
@@ -371,53 +420,63 @@ public class QueryClient<Key> where Key: QueryKey {
   public func configureMutations<P>(for predicate: P, configurer: @escaping (inout MutationConfig<Key>) -> Void) where P: QueryKeyPredicate, P.Key == Key {
     mutationConfigurers.removeAll(where: { _, equals, _ in equals(predicate) })
     mutationConfigurers.append(
-      ({ predicate.matches(key: $0) }, { predicate == $0 as! P }, configurer)
+      ({ predicate.matches(key: $0) }, { predicate == $0 as? P }, configurer)
     )
 
     invalidateMutations(for: predicate)
   }
 
   public func invalidateQueries<P>(for predicate: P, remove: Bool = false) where P: QueryKeyPredicate, P.Key == Key {
-    for key in queryCache.allKeys {
+    for (key, users) in queryUsers {
       if predicate.matches(key: key) {
-        if remove {
-          // delete the entire cached query state
-          queryCache.removeObject(forKey: key)
-        } else {
-          if let query = try? queryCache.object(forKey: key) {
-            // reset the query's configuration and force a refresh
-            query.config = buildQueryConfig(for: key)
-            query.forceRefetch = true
-          }
-        }
-
-        notifyQueryReset(for: key)
-
-        // cancel/restart the query task
+        // cancel the query task
         if let task = queryTasks[key] {
           task.cancel()
         }
+        
+        if remove {
+          // delete the entire cached query state
+          queryCache.removeObject(forKey: WrappedKey(key))
+        } else if let queryState = queryCache.object(forKey: WrappedKey(key)) {
+          // reset the query's configuration and force a refresh
+          queryState.config = buildQueryConfig(for: key)
+          queryState.forceRefetch = true
+        }
+        
+        print("invalidated query \(String(describing: key))")
 
+        // start/restart the query task
         if let users = queryUsers[key], users > 0 {
-          queryTasks[key] = Task { @MainActor [weak self] in
+          let state = queryState(for: key)
+          
+          let task = Task.detached { @MainActor [weak self] in
             guard let self else { return }
             await runQuery(key: key)
+            
+            queryTasks.removeValue(forKey: key)
+            notifyQueryReset(for: key)
           }
+          
+          state.task = task
+          queryTasks[key] = task
         }
+        
+        notifyQueryReset(for: key)
       }
     }
   }
 
   public func invalidateMutations<P>(for predicate: P, remove _: Bool = false) where P: QueryKeyPredicate, P.Key == Key {
-    for id in mutationCache.allKeys {
+    for id in mutationKeys {
       if predicate.matches(key: id.key) {
-        mutationCache.removeObject(forKey: id)
-        notifications.post(name: mutationDidChange, object: MutationUpdate(mutationId: id, update: .reset))
-
+        mutationCache.removeObject(forKey: WrappedKey(id))
+        
         // cancel the mutation task
         if let task = mutationTasks[id] {
           task.cancel()
         }
+        
+        notifications.post(name: mutationDidChange, object: MutationUpdate(mutationId: id, update: .reset))
       }
     }
   }
@@ -434,11 +493,11 @@ public class QueryClient<Key> where Key: QueryKey {
     typedQuery(for: key).observed()
   }
 
-  public func queryState(for key: Key) -> QueryState<Key> {
-    switch try? queryCache.object(forKey: key) {
+  func queryState(for key: Key) -> QueryState<Key> {
+    switch queryCache.object(forKey: WrappedKey(key)) {
     case .none:
       let newState = QueryState<Key>(config: buildQueryConfig(for: key))
-      queryCache.setObject(newState, forKey: key)
+      queryCache.setObject(newState, forKey: WrappedKey(key))
       return newState
     case let .some(state):
       return state
@@ -465,28 +524,14 @@ public class QueryClient<Key> where Key: QueryKey {
     typedMutation(for: key).observed()
   }
 
-  public func mutationState(for id: MutationId<Key>) -> MutationState<Key> {
-    switch try? mutationCache.object(forKey: id) {
+  func mutationState(for id: MutationId<Key>) -> MutationState<Key> {
+    switch try? mutationCache.object(forKey: WrappedKey(id)) {
     case .none:
       let newState = MutationState<Key>(config: buildMutationConfig(for: id.key))
-      mutationCache.setObject(newState, forKey: id)
+      mutationCache.setObject(newState, forKey: WrappedKey(id))
       return newState
     case let .some(state):
       return state
     }
-  }
-
-  public func mutationStates(for key: Key) -> [MutationState<Key>] {
-    var states: [MutationState<Key>] = []
-
-    for id in mutationCache.allKeys {
-      if id.key == key {
-        if let state = try? mutationCache.object(forKey: id) {
-          states.append(state)
-        }
-      }
-    }
-
-    return states
   }
 }

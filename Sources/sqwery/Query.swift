@@ -28,16 +28,45 @@ public struct QueryConfig<Key> where Key: QueryKey {
 
 @MainActor
 @available(iOS 16.0, *)
-public class QueryState<Key> where Key: QueryKey {
+class QueryState<Key>: NSDiscardableContent where Key: QueryKey {
   public var config: QueryConfig<Key>
   public var fetchStatus: FetchStatus = .idle
   public var dataStatus: DataStatus = .idle
   public var lastRequestTime: ContinuousClock.Instant?
   public var retryCount: UInt = 0
+  
   var forceRefetch: Bool = false
+  var userCount: Int = 0
+  var task: Task<(), Never>? = nil
+  var discarded: Bool = false
 
   init(config: QueryConfig<Key>) {
     self.config = config
+  }
+  
+  func beginContentAccess() -> Bool {
+    if discarded { return false }
+    
+    userCount += 1
+    return true
+  }
+  
+  func endContentAccess() {
+    userCount -= 1
+  }
+  
+  func discardContentIfPossible() {
+    if userCount == 0 {
+      task?.cancel()
+      
+      fetchStatus = .idle
+      dataStatus = .idle
+      discarded = true
+    }
+  }
+  
+  func isContentDiscarded() -> Bool {
+    discarded
   }
 }
 
@@ -47,7 +76,7 @@ public enum FetchStatus {
 
 public enum DataStatus {
   case idle, pending, success(Any?), error(Error)
-  
+
   public var isIdle: Bool {
     if case .idle = self {
       true
@@ -55,25 +84,25 @@ public enum DataStatus {
       false
     }
   }
-  
+
   public var isPending: Bool {
-    if case .idle = self {
+    if case .pending = self {
       true
     } else {
       false
     }
   }
-  
+
   public var isSuccess: Bool {
-    if case .success(_) = self {
+    if case .success = self {
       true
     } else {
       false
     }
   }
-  
+
   public var isError: Bool {
-    if case .error(_) = self {
+    if case .error = self {
       true
     } else {
       false
@@ -83,7 +112,7 @@ public enum DataStatus {
 
 public enum TypedDataStatus<Value> {
   case idle, pending, success(Value), error(Error)
-  
+
   public var isIdle: Bool {
     if case .idle = self {
       true
@@ -91,25 +120,25 @@ public enum TypedDataStatus<Value> {
       false
     }
   }
-  
+
   public var isPending: Bool {
-    if case .idle = self {
+    if case .pending = self {
       true
     } else {
       false
     }
   }
-  
+
   public var isSuccess: Bool {
-    if case .success(_) = self {
+    if case .success = self {
       true
     } else {
       false
     }
   }
-  
+
   public var isError: Bool {
-    if case .error(_) = self {
+    if case .error = self {
       true
     } else {
       false
@@ -148,7 +177,7 @@ public class Query<Key> where Key: QueryKey {
     self.client = client
   }
 
-  public var state: QueryState<Key> {
+  var state: QueryState<Key> {
     client.queryState(for: key)
   }
 
@@ -246,7 +275,7 @@ public class TypedQuery<Key, Value> where Key: QueryKey {
   var key: Key { inner.key }
   var client: QueryClient<Key> { inner.client }
 
-  public var state: QueryState<Key> {
+  var state: QueryState<Key> {
     inner.state
   }
 
@@ -330,7 +359,7 @@ public class ObservedQuery<Key, Value>: ObservableObject where Key: QueryKey {
     inner.fetchStatus
   }
 
-  public var state: QueryState<Key> {
+  var state: QueryState<Key> {
     inner.state
   }
 

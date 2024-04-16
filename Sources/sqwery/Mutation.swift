@@ -33,15 +33,43 @@ public struct MutationConfig<Key> where Key: QueryKey {
 
 @MainActor
 @available(iOS 16.0, *)
-public class MutationState<Key> where Key: QueryKey {
+class MutationState<Key>: NSDiscardableContent where Key: QueryKey {
   public var config: MutationConfig<Key>
   public var dataStatus: DataStatus = .idle
   public var lastRequestTime: ContinuousClock.Instant?
   public var retryCount: UInt = 0
   public var parameters: Any?
+  
+  var userCount: Int = 0
+  var task: Task<(), Never>? = nil
+  var discarded: Bool = false
 
   init(config: MutationConfig<Key>) {
     self.config = config
+  }
+  
+  func beginContentAccess() -> Bool {
+    if discarded { return false }
+    
+    userCount += 1
+    return true
+  }
+  
+  func endContentAccess() {
+    userCount -= 1
+  }
+  
+  func discardContentIfPossible() {
+    if userCount == 0 {
+      task?.cancel()
+      
+      dataStatus = .idle
+      discarded = true
+    }
+  }
+  
+  func isContentDiscarded() -> Bool {
+    discarded
   }
 }
 
@@ -64,12 +92,8 @@ public class Mutation<Key> where Key: QueryKey {
     MutationId(key: key, id: currentId)
   }
 
-  public var state: MutationState<Key> {
+  var state: MutationState<Key> {
     client.mutationState(for: id)
-  }
-
-  public var states: [MutationState<Key>] {
-    client.mutationStates(for: key)
   }
 
   public var status: DataStatus {
@@ -130,7 +154,7 @@ public class TypedMutation<Key, Value, Param> where Key: QueryKey {
   var key: Key { inner.key }
   var client: QueryClient<Key> { inner.client }
 
-  public var state: MutationState<Key> {
+  var state: MutationState<Key> {
     inner.state
   }
 
@@ -191,7 +215,7 @@ public class ObservedMutation<Key, Value, Param>: ObservableObject where Key: Qu
 
   public var status: TypedDataStatus<Value> { inner.status }
 
-  public var state: MutationState<Key> { inner.state }
+  var state: MutationState<Key> { inner.state }
 
   public var data: Value? { inner.data }
 
