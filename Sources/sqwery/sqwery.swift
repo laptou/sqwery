@@ -45,20 +45,19 @@ public enum StatusUpdate {
 @available(iOS 14.0, *)
 var logger = Logger(subsystem: "me.abiodun.sqwery", category: "sqwery")
 
-
 // NSCache can only use keys that implement NSObject
 final class WrappedKey<K>: NSObject where K: Hashable & Equatable {
   let key: K
-  
+
   init(_ key: K) { self.key = key }
-  
-  override var hash: Int { return key.hashValue }
-  
+
+  override var hash: Int { key.hashValue }
+
   override func isEqual(_ object: Any?) -> Bool {
     guard let value = object as? WrappedKey else {
       return false
     }
-    
+
     return value.key == key
   }
 }
@@ -68,7 +67,7 @@ final class WrappedKey<K>: NSObject where K: Hashable & Equatable {
 public class QueryClient<Key> where Key: QueryKey {
   /// Enables or disables automatically refreshing queries. Useful to disable this for previews.
   public var autoRefresh: Bool = true
-  
+
   private let queryCache: NSCache<WrappedKey<Key>, QueryState<Key>>
   private let mutationCache: NSCache<WrappedKey<MutationId<Key>>, MutationState<Key>>
   private var queryConfigurers: [(matches: (Key) -> Bool, equals: (any QueryKeyPredicate) -> Bool, configurer: QueryConfigurer<Key>)] = []
@@ -124,17 +123,18 @@ public class QueryClient<Key> where Key: QueryKey {
 
     if queryUsers[key]! > 0, !queryTasks.keys.contains(key) {
       let state = queryState(for: key)
-      
+      print("running query \(String(describing: key)) due to non-zero users")
+
       // we went from zero observers for this query to not-zero, start a task
       let task = Task { @MainActor [weak self] in
         guard let self else { return }
         await runQuery(key: key)
-        
+
         // when the task exits (due to cancellation, for example) deregister it
         queryTasks.removeValue(forKey: key)
         notifyQueryReset(for: key)
       }
-      
+
       // store the task in the query state so that it gets cancelled when NSCache evicts it
       state.task = task
       queryTasks[key] = task
@@ -149,6 +149,7 @@ public class QueryClient<Key> where Key: QueryKey {
     if queryUsers[key] == nil || queryUsers[key]! <= 0 {
       // we went from not-zero observers to zero, cancel the task
       if let taskForKey = queryTasks[key] {
+        print("canceling query \(String(describing: key)) due to zero users")
         taskForKey.cancel()
         queryTasks.removeValue(forKey: key)
       }
@@ -162,7 +163,22 @@ public class QueryClient<Key> where Key: QueryKey {
     }
   }
 
+  private func waitForQueryUpdate(for key: Key) async {
+    // no more retries available, wait until something changes
+    var iter = notifications.notifications(named: queryDidChange)
+      // Notification is not Sendable, so we map the iterator even though we're not using the objects
+      .map { $0.object as! QueryUpdate }
+      .filter {
+        $0.key == key
+      }
+      .makeAsyncIterator()
+
+    let _ = await iter.next()
+  }
+
   func runQuery(key: Key) async {
+    print("runQuery \(String(describing: key)) started")
+
     while !Task.isCancelled {
       let currentState = queryState(for: key)
 
@@ -190,12 +206,7 @@ public class QueryClient<Key> where Key: QueryKey {
             logger.log(level: .debug, "query \(String(describing: key)) pending, cannot run because it does not have a runner")
             // if we don't have a runner, wait until someone modifies the state of
             // the query client, then check again
-            var iter = notifications.notifications(named: queryDidChange)
-              // Notification is not Sendable, so we map the iterator even though we're not using the objects
-              .map { $0.object as! QueryUpdate }
-              .filter { $0.key == key }
-              .makeAsyncIterator()
-            let _ = await iter.next()
+            await waitForQueryUpdate(for: key)
 
             continue
           }
@@ -214,27 +225,34 @@ public class QueryClient<Key> where Key: QueryKey {
       case .success:
         // if we've entered success state for any reason, clear retry count
         currentState.retryCount = 0
-        
+
         // if we have success and auto refresh is disabled, do nothing
         if !autoRefresh {
-          var iter = notifications.notifications(named: queryDidChange)
-          // Notification is not Sendable, so we map the iterator even though we're not using the objects
-            .map { $0.object as! QueryUpdate }
-            .filter { $0.key == key }
-            .makeAsyncIterator()
-          let _ = await iter.next()
-          
+          await waitForQueryUpdate(for: key)
           continue
         }
-        
+
         do {
-          // in success state? sleep until stale time, then retry
+          // in success state? sleep until stale time, or query update, then retry
           if !currentState.forceRefetch {
             if let lastRequestTime = currentState.lastRequestTime {
               let staleTime = lastRequestTime + currentState.config.lifetime
               let delay = staleTime - ContinuousClock.now
               logger.log(level: .debug, "query \(String(describing: key)) waiting to refresh for \(delay)")
-              try await Task.sleep(for: delay)
+
+              let interrupted = try await withThrowingTaskGroup(of: Bool.self) {
+                group in
+
+                group.addTask { try await Task.sleep(for: delay); return false }
+                group.addTask { await self.waitForQueryUpdate(for: key); return true }
+
+                let interrupted = try await group.next()
+                group.cancelAll()
+                return interrupted
+              }
+
+              if interrupted == true { continue }
+
               notifications.post(name: queryDidChange, object: QueryUpdate(key: key, update: .expired))
             }
           } else {
@@ -276,7 +294,16 @@ public class QueryClient<Key> where Key: QueryKey {
                 let staleTime = lastRequestTime + currentState.config.retryDelay
                 let delay = staleTime - ContinuousClock.now
                 logger.log(level: .debug, "query \(String(describing: key)) waiting to retry for \(delay)")
-                try await Task.sleep(for: delay)
+
+                try await withThrowingTaskGroup(of: Void.self) {
+                  group in
+
+                  group.addTask { try await Task.sleep(for: delay) }
+                  group.addTask { await self.waitForQueryUpdate(for: key) }
+
+                  try await group.next()
+                  group.cancelAll()
+                }
               }
             } else {
               logger.log(level: .debug, "query \(String(describing: key)) force refetch")
@@ -319,20 +346,15 @@ public class QueryClient<Key> where Key: QueryKey {
           currentState.fetchStatus = .idle
           currentState.lastRequestTime = ContinuousClock.now
         } else {
-          // no more retries available, wait until something changes
-          var iter = notifications.notifications(named: queryDidChange)
-            // Notification is not Sendable, so we map the iterator even though we're not using the objects
-            .map { $0.object as! QueryUpdate }
-            .filter { $0.key == key }
-            .makeAsyncIterator()
-          let _ = await iter.next()
-
+          await waitForQueryUpdate(for: key)
           continue
         }
       }
 
       queryCache.setObject(currentState, forKey: WrappedKey(key))
     }
+
+    print("runQuery \(String(describing: key)) stopped")
   }
 
   func runMutation(for id: MutationId<Key>, param: Any? = nil) async {
@@ -404,8 +426,16 @@ public class QueryClient<Key> where Key: QueryKey {
     notifications.publisher(for: queryDidChange).map { $0.object as! QueryUpdate }.eraseToAnyPublisher()
   }
 
+  public func queryUpdatesAsync() -> AsyncMapSequence<NotificationCenter.Notifications, QueryUpdate<Key>> {
+    notifications.notifications(named: queryDidChange).map { $0.object as! QueryUpdate }
+  }
+
   public func mutationUpdates() -> AnyPublisher<MutationUpdate<Key>, Never> {
     notifications.publisher(for: mutationDidChange).map { $0.object as! MutationUpdate }.eraseToAnyPublisher()
+  }
+
+  public func mutationUpdatesAsync() -> AsyncMapSequence<NotificationCenter.Notifications, MutationUpdate<Key>> {
+    notifications.notifications(named: mutationDidChange).map { $0.object as! MutationUpdate }
   }
 
   public func configureQueries<P>(for predicate: P, configurer: @escaping (inout QueryConfig<Key>) -> Void) where P: QueryKeyPredicate, P.Key == Key {
@@ -433,7 +463,7 @@ public class QueryClient<Key> where Key: QueryKey {
         if let task = queryTasks[key] {
           task.cancel()
         }
-        
+
         if remove {
           // delete the entire cached query state
           queryCache.removeObject(forKey: WrappedKey(key))
@@ -442,25 +472,25 @@ public class QueryClient<Key> where Key: QueryKey {
           queryState.config = buildQueryConfig(for: key)
           queryState.forceRefetch = true
         }
-        
+
         print("invalidated query \(String(describing: key))")
 
         // start/restart the query task
         if let users = queryUsers[key], users > 0 {
           let state = queryState(for: key)
-          
+
           let task = Task.detached { @MainActor [weak self] in
             guard let self else { return }
             await runQuery(key: key)
-            
+
             queryTasks.removeValue(forKey: key)
             notifyQueryReset(for: key)
           }
-          
+
           state.task = task
           queryTasks[key] = task
         }
-        
+
         notifyQueryReset(for: key)
       }
     }
@@ -470,12 +500,12 @@ public class QueryClient<Key> where Key: QueryKey {
     for id in mutationKeys {
       if predicate.matches(key: id.key) {
         mutationCache.removeObject(forKey: WrappedKey(id))
-        
+
         // cancel the mutation task
         if let task = mutationTasks[id] {
           task.cancel()
         }
-        
+
         notifications.post(name: mutationDidChange, object: MutationUpdate(mutationId: id, update: .reset))
       }
     }

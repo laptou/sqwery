@@ -34,37 +34,37 @@ class QueryState<Key>: NSDiscardableContent where Key: QueryKey {
   public var dataStatus: DataStatus = .idle
   public var lastRequestTime: ContinuousClock.Instant?
   public var retryCount: UInt = 0
-  
+
   var forceRefetch: Bool = false
   var userCount: Int = 0
-  var task: Task<(), Never>? = nil
+  var task: Task<Void, Never>? = nil
   var discarded: Bool = false
 
   init(config: QueryConfig<Key>) {
     self.config = config
   }
-  
+
   func beginContentAccess() -> Bool {
     if discarded { return false }
-    
+
     userCount += 1
     return true
   }
-  
+
   func endContentAccess() {
     userCount -= 1
   }
-  
+
   func discardContentIfPossible() {
     if userCount == 0 {
       task?.cancel()
-      
+
       fetchStatus = .idle
       dataStatus = .idle
       discarded = true
     }
   }
-  
+
   func isContentDiscarded() -> Bool {
     discarded
   }
@@ -261,6 +261,20 @@ public class Query<Key> where Key: QueryKey {
     state.forceRefetch = true
     client.notifyQueryReset(for: key)
   }
+
+  public func refetchAsync() async {
+    refetch()
+
+    for await update in client.queryUpdatesAsync() {
+      if update.key != key { continue }
+      switch dataStatus {
+      case .idle, .pending: continue
+      default: break
+      }
+
+      break
+    }
+  }
 }
 
 @MainActor
@@ -330,6 +344,10 @@ public class TypedQuery<Key, Value> where Key: QueryKey {
   public func refetch() {
     inner.refetch()
   }
+
+  public func refetchAsync() async {
+    await inner.refetchAsync()
+  }
 }
 
 @MainActor
@@ -395,5 +413,9 @@ public class ObservedQuery<Key, Value>: ObservableObject where Key: QueryKey {
 
   public func refetch() {
     inner.refetch()
+  }
+
+  public func refetchAsync() async {
+    await inner.refetchAsync()
   }
 }

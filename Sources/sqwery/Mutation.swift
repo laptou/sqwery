@@ -39,35 +39,35 @@ class MutationState<Key>: NSDiscardableContent where Key: QueryKey {
   public var lastRequestTime: ContinuousClock.Instant?
   public var retryCount: UInt = 0
   public var parameters: Any?
-  
+
   var userCount: Int = 0
-  var task: Task<(), Never>? = nil
+  var task: Task<Void, Never>? = nil
   var discarded: Bool = false
 
   init(config: MutationConfig<Key>) {
     self.config = config
   }
-  
+
   func beginContentAccess() -> Bool {
     if discarded { return false }
-    
+
     userCount += 1
     return true
   }
-  
+
   func endContentAccess() {
     userCount -= 1
   }
-  
+
   func discardContentIfPossible() {
     if userCount == 0 {
       task?.cancel()
-      
+
       dataStatus = .idle
       discarded = true
     }
   }
-  
+
   func isContentDiscarded() -> Bool {
     discarded
   }
@@ -140,6 +140,20 @@ public class Mutation<Key> where Key: QueryKey {
     currentId = client.getNextMutationId(for: key)
     client.startMutation(for: id, param: param)
   }
+
+  public func runAsync(_ param: Any? = nil) async {
+    run(param)
+
+    for await update in client.mutationUpdatesAsync() {
+      if update.mutationId != id { continue }
+      switch status {
+      case .idle, .pending: continue
+      default: break
+      }
+
+      break
+    }
+  }
 }
 
 @MainActor
@@ -190,6 +204,10 @@ public class TypedMutation<Key, Value, Param> where Key: QueryKey {
   public func run(_ param: Param) {
     inner.run(param)
   }
+
+  public func runAsync(_ param: Param) async {
+    await inner.runAsync(param)
+  }
 }
 
 @MainActor
@@ -227,5 +245,9 @@ public class ObservedMutation<Key, Value, Param>: ObservableObject where Key: Qu
 
   public func run(_ param: Param) {
     inner.run(param)
+  }
+
+  public func runAsync(_ param: Param) async {
+    await inner.runAsync(param)
   }
 }
