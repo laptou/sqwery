@@ -1,3 +1,4 @@
+/// Uniquely identifiers a query and provides information about how this query should run.
 public protocol QueryKey: Hashable {
   associatedtype Result
 

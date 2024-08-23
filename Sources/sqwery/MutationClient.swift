@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-actor MutationClient {
+public actor MutationClient {
   private let subject = PassthroughSubject<(mutationKey: AnyHashable, mutationState: Any), Never>()
 
   func mutate<K: MutationKey>(_ key: K, parameter: K.Parameter) async -> AnyPublisher<RequestState<K.Result>, Never> {
