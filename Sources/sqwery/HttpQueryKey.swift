@@ -11,7 +11,7 @@ public protocol HttpQueryKey: QueryKey where Result: Decodable {
   var method: HTTPMethod { get }
   var headers: [String: String] { get }
   var body: Data? { get throws }
-  
+
   /// Response codes that are considered valid for this request. Return nil to accept all response codes in `200..299`. Defaults to nil.
   var validResponseCodes: Set<Int>? { get }
   /// Content types that are considered valid for this request. Return nil to accept the content types that were specified in the `Accept` header. Defaults to nil.
@@ -21,7 +21,7 @@ public protocol HttpQueryKey: QueryKey where Result: Decodable {
   var emptyResponseCodes: Set<Int> { get }
   /// Request methods that are allowed to return empty responses. Defaults to `HEAD`.
   var emptyRequestMethods: Set<HTTPMethod> { get }
-  
+
   /// Decoder that is used to deserialize the returned data into the `Result` type. Defaults to `JSONDecoder`.
   var responseDataDecoder: any DataDecoder { get }
 }
@@ -29,13 +29,13 @@ public protocol HttpQueryKey: QueryKey where Result: Decodable {
 public extension HttpQueryKey {
   var headers: [String: String] { [:] }
   var body: Data? { nil }
-  
+
   var validResponseCodes: Set<Int>? { nil }
   var validContentTypes: Set<String>? { nil }
 
   var emptyResponseCodes: Set<Int> { [204, 205] }
   var emptyRequestMethods: Set<HTTPMethod> { [.head] }
-  
+
   var responseDataDecoder: any DataDecoder { JSONDecoder() }
 
   func run() async throws -> Result {
@@ -45,22 +45,23 @@ public extension HttpQueryKey {
     urlRequest.headers = HTTPHeaders(headers)
 
     var dataRequest = AF.request(urlRequest)
-    
-    if let validResponseCodes = validResponseCodes {
+
+    if let validResponseCodes {
       dataRequest = dataRequest.validate(statusCode: validResponseCodes)
     }
-    
-    if let validContentTypes = validContentTypes {
+
+    if let validContentTypes {
       dataRequest = dataRequest.validate(contentType: validContentTypes)
     }
-    
-    if validResponseCodes == nil && validContentTypes == nil {
+
+    if validResponseCodes == nil, validContentTypes == nil {
       dataRequest = dataRequest.validate()
     }
-      
+
     let task = dataRequest.serializingDecodable(
-      Result.self, decoder: responseDataDecoder, emptyResponseCodes: emptyResponseCodes, emptyRequestMethods: emptyRequestMethods)
-      
+      Result.self, decoder: responseDataDecoder, emptyResponseCodes: emptyResponseCodes, emptyRequestMethods: emptyRequestMethods
+    )
+
     let value = try await task.value
     return value
   }
@@ -76,7 +77,7 @@ public protocol HttpJsonQueryKey: HttpQueryKey {
 }
 
 public extension HttpJsonQueryKey {
-  var headers: [String: String] { ["accept":"application/json"] }
-  
+  var headers: [String: String] { ["accept": "application/json"] }
+
   var body: Data? { get throws { try JSONEncoder().encode(bodyData) } }
 }

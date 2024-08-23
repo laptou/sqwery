@@ -7,12 +7,12 @@ public class MutationObserver<K: MutationKey>: ObservableObject {
   private var cancellable: AnyCancellable?
   private let client: MutationClient
   private let key: K
-  
+
   init(client: MutationClient, key: K) {
     self.client = client
     self.key = key
   }
-  
+
   func mutate(parameter: K.Parameter) {
     Task {
       cancellable = await client.mutate(key, parameter: parameter)
@@ -22,12 +22,12 @@ public class MutationObserver<K: MutationKey>: ObservableObject {
         }
     }
   }
-  
+
   func mutateAsync(parameter: K.Parameter) async -> Result<K.Result, Error> {
     let stream = await client.mutate(key, parameter: parameter)
       .receive(on: DispatchQueue.main)
       .values
-    
+
     for await state in stream {
       switch state.status {
       case let .success(value: value):
@@ -37,10 +37,10 @@ public class MutationObserver<K: MutationKey>: ObservableObject {
       default: continue
       }
     }
-    
+
     return .failure(MutationObserverError.canceled)
   }
-  
+
   func cancel() {
     cancellable?.cancel()
   }
