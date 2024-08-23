@@ -1,7 +1,5 @@
-protocol RequestKey: Hashable {
+public protocol QueryKey: Hashable {
   associatedtype Result
-
-  var type: RequestType { get }
 
   var resultLifetime: Duration { get }
 
@@ -9,9 +7,4 @@ protocol RequestKey: Hashable {
   var retryLimit: Int { get }
 
   func run() async throws -> Result
-}
-
-enum RequestType {
-  case query
-  case mutation
 }

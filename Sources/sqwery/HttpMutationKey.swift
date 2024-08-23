@@ -1,30 +1,29 @@
 import Alamofire
 import Foundation
 
-protocol HttpRequestKey: RequestKey where Result: Decodable {
+public protocol HttpMutationKey: MutationKey where Result: Decodable {
   associatedtype Url: URLConvertible
   associatedtype Result = Alamofire.Empty
 
   var url: Url { get }
   var method: HTTPMethod { get }
   var headers: [String: String] { get }
-  var body: Data? { get throws }
+  func body(for parameter: Parameter) throws -> Data?
 
   var emptyResponseCodes: Set<Int> { get }
   var emptyRequestMethods: Set<HTTPMethod> { get }
 }
 
-extension HttpRequestKey {
+public extension HttpMutationKey {
   var headers: [String: String] { [:] }
-  var body: Data? { nil }
 
   var emptyResponseCodes: Set<Int> { [204, 205] }
   var emptyRequestMethods: Set<HTTPMethod> { [.head] }
 
-  func run() async throws -> Result {
+  func run(parameter: Parameter) async throws -> Result {
     var urlRequest = try URLRequest(url: url.asURL())
     urlRequest.method = method
-    urlRequest.httpBody = try body
+    urlRequest.httpBody = try body(for: parameter)
     urlRequest.headers = HTTPHeaders(headers)
 
     let task = AF.request(urlRequest).serializingDecodable(Result.self, emptyResponseCodes: emptyResponseCodes, emptyRequestMethods: emptyRequestMethods)
@@ -33,12 +32,14 @@ extension HttpRequestKey {
   }
 }
 
-protocol HttpJsonRequestKey: HttpRequestKey {
+public protocol HttpJsonMutationKey: HttpMutationKey {
   associatedtype Body: Encodable
 
-  var bodyData: Body { get }
+  func bodyData(for parameter: Parameter) throws -> Body
 }
 
-extension HttpJsonRequestKey {
-  var body: Data? { get throws { try JSONEncoder().encode(bodyData) } }
+public extension HttpJsonMutationKey {
+  func body(for parameter: Parameter) throws -> Data? {
+    try JSONEncoder().encode(bodyData(for: parameter))
+  }
 }

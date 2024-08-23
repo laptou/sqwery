@@ -9,10 +9,10 @@ actor RequestCache {
       if let state = cacheValue.value as? RequestState<Result> {
         return state
       } else {
+        // this should never happen
         #if DEBUG
           fatalError("could not cast request state type")
         #endif
-        // log a warning
       }
     } else {
       let state = RequestState<Result>()

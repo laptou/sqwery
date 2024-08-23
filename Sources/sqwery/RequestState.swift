@@ -1,13 +1,13 @@
 import Foundation
 
-class RequestState<Result>: NSObject {
+public class RequestState<Result>: NSObject {
   var beganFetching: Date?
   var finishedFetching: Date?
   var retryCount: Int = 0
   var status: RequestStatus<Result> = .pending
 }
 
-enum RequestStatus<Result> {
+public enum RequestStatus<Result> {
   case success(value: Result)
   case error(error: any Error)
   case pending

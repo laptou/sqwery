@@ -2,7 +2,7 @@ import Combine
 import Foundation
 
 @MainActor
-class QueryObserver<K: RequestKey>: ObservableObject {
+public class QueryObserver<K: QueryKey>: ObservableObject {
   @Published private(set) var state: RequestState<K.Result> = RequestState()
   var status: RequestStatus<K.Result> { state.status }
 
@@ -17,7 +17,7 @@ class QueryObserver<K: RequestKey>: ObservableObject {
 
   func listen() {
     Task {
-      cancellable = await client.startFetching(for: key)
+      cancellable = await client.subscribe(for: key)
         .receive(on: DispatchQueue.main)
         .sink { [weak self] state in
           self?.state = state

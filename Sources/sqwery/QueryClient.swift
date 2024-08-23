@@ -2,23 +2,19 @@ import Alamofire
 import Combine
 import Foundation
 
-actor QueryClient {
+public actor QueryClient {
   private let subject = PassthroughSubject<(requestKey: AnyHashable, requestState: Any), Never>()
   private var tasks: [AnyHashable: Task<Void, Never>] = [:]
   private var subscriberCounts: [AnyHashable: Int] = [:]
   private let cache = RequestCache()
 
-  func startFetching<K: RequestKey>(for key: K) -> AnyPublisher<RequestState<K.Result>, Never> {
-    if key.type == .query {
-      subscriberCounts[key, default: 0] += 1
+  func subscribe<K: QueryKey>(for key: K) -> AnyPublisher<RequestState<K.Result>, Never> {
+    subscriberCounts[key, default: 0] += 1
 
-      if tasks[key] == nil {
-        tasks[key] = Task { [weak self] in
-          await self?.fetchLoop(for: key)
-        }
+    if tasks[key] == nil {
+      tasks[key] = Task { [weak self] in
+        await self?.fetchQuery(for: key)
       }
-    } else {
-      fatalError("unimplemented")
     }
 
     return subject
@@ -26,26 +22,26 @@ actor QueryClient {
       .compactMap { $0.requestState as? RequestState<K.Result> }
       .handleEvents(receiveCancel: { [weak self] in
         Task { [weak self] in
-          await self?.decrementSubscriberCount(for: key)
+          await self?.unsubscribe(for: key)
         }
       })
       .eraseToAnyPublisher()
   }
 
-  private func decrementSubscriberCount(for key: AnyHashable) {
+  private func unsubscribe(for key: AnyHashable) {
     subscriberCounts[key, default: 1] -= 1
     if subscriberCounts[key] == 0 {
-      stopFetching(for: key)
+      cancel(for: key)
     }
   }
 
-  private func stopFetching(for key: AnyHashable) {
+  private func cancel(for key: AnyHashable) {
     tasks[key]?.cancel()
     tasks.removeValue(forKey: key)
     subscriberCounts.removeValue(forKey: key)
   }
 
-  private func fetchLoop<K: RequestKey>(for key: K) async {
+  private func fetchQuery<K: QueryKey>(for key: K) async {
     while !Task.isCancelled {
       let state: RequestState<K.Result> = await cache.get(for: key)
 
@@ -67,6 +63,7 @@ actor QueryClient {
         while true {
           do {
             result = try await key.run()
+            break
           } catch {
             attempt += 1
 
@@ -93,29 +90,29 @@ actor QueryClient {
     }
   }
 
-  func invalidate(key: some RequestKey) async {
-    await cache.clear(for: key)
-    if subscriberCounts[key, default: 0] > 0 {
-      tasks[key]?.cancel()
-      tasks[key] = Task { [weak self] in
-        await self?.fetchLoop(for: key)
-      }
+  private func restartQuery(for key: some QueryKey) {
+    tasks[key]?.cancel()
+    tasks[key] = Task { [weak self] in
+      await self?.fetchQuery(for: key)
     }
   }
 
-  func invalidateWhere(_ predicate: (any RequestKey) -> Bool) async {
+  func invalidate(key: some QueryKey) async {
+    await cache.clear(for: key)
+    if subscriberCounts[key, default: 0] > 0 {
+      restartQuery(for: key)
+    }
+  }
+
+  func invalidateWhere(_ predicate: (any QueryKey) -> Bool) async {
     for (key, _) in tasks {
-      if !predicate(key.base as! any RequestKey) { continue }
+      let queryKey = key.base as! any QueryKey
+      if !predicate(queryKey) { continue }
 
       await cache.clear(for: key)
 
       if subscriberCounts[key, default: 0] > 0 {
-        tasks[key]?.cancel()
-        if let requestKey = key.base as? any RequestKey {
-          tasks[key] = Task { [weak self] in
-            await self?.fetchLoop(for: requestKey)
-          }
-        }
+        restartQuery(for: queryKey)
       }
     }
   }
@@ -123,13 +120,10 @@ actor QueryClient {
   func invalidateAll() async {
     await cache.clearAll()
     for (key, _) in tasks {
+      let queryKey = key.base as! any QueryKey
+
       if subscriberCounts[key, default: 0] > 0 {
-        tasks[key]?.cancel()
-        if let requestKey = key.base as? any RequestKey {
-          tasks[key] = Task { [weak self] in
-            await self?.fetchLoop(for: requestKey)
-          }
-        }
+        restartQuery(for: queryKey)
       }
     }
   }

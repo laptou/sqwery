@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 @propertyWrapper
-struct Query<K: RequestKey>: DynamicProperty {
+public struct Query<K: QueryKey>: DynamicProperty {
   @ObservedObject private var observer: QueryObserver<K>
 
   init(_ key: K, queryClient: QueryClient) {
