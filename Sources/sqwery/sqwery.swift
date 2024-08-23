@@ -198,7 +198,7 @@ public class QueryClient<Key> where Key: QueryKey {
             currentState.forceRefetch = false
             currentState.fetchStatus = .fetching
             notifications.post(name: queryDidChange, object: QueryUpdate(key: key, update: .began))
-            let result = try await Task.detached { try await runner(key) }.value
+            let result = try await runner(key)
             currentState.dataStatus = .success(result)
             logger.log(level: .debug, "query \(String(describing: key)) pending -> success")
             notifications.post(name: queryDidChange, object: QueryUpdate(key: key, update: .succeeded(result)))
@@ -358,40 +358,42 @@ public class QueryClient<Key> where Key: QueryKey {
   }
 
   func runMutation(for id: MutationId<Key>, param: Any? = nil) async {
+    print("runMutation start \(String(describing: id)) \(String(describing: param))")
+    
     let currentState = mutationState(for: id)
     currentState.dataStatus = .pending
-
+    
     while currentState.retryCount < currentState.config.retryLimit, !Task.isCancelled {
       do {
         let runner = currentState.config.run
-
+        
         if let runner {
           currentState.dataStatus = .pending
           // prevent NSCache from evicting our mutation and cancelling the task while it's running
           currentState.beginContentAccess()
           logger.log(level: .debug, "mutation \(String(describing: id)) idle -> pending")
           notifications.post(name: mutationDidChange, object: MutationUpdate(mutationId: id, update: .began))
-
+          
           let result = try await Task.detached { try await runner(id.key, param) }.value
           currentState.endContentAccess()
           currentState.dataStatus = .success(result)
-
+          
           logger.log(level: .debug, "mutation \(String(describing: id)) pending -> success")
           notifications.post(name: mutationDidChange, object: MutationUpdate(mutationId: id, update: .succeeded(result)))
-
+          
           break
         } else {
           logger.log(level: .debug, "mutation \(String(describing: id)) pending, cannot run because it does not have a runner")
           // can't run b/c we don't have a runner, wait for something to change
           var iter = notifications.notifications(named: mutationDidChange)
-            // Notification is not Sendable, so we map the iterator even though we're not using the objects
-            // for some reason Swift refuses to allow the following
-//            .map({ $0.object as! MutationUpdate<Key> })
-//            .filter({ $0.mutationId === id })
+          // Notification is not Sendable, so we map the iterator even though we're not using the objects
+          // for some reason Swift refuses to allow the following
+          //            .map({ $0.object as! MutationUpdate<Key> })
+          //            .filter({ $0.mutationId === id })
             .map { _ in () }
             .makeAsyncIterator()
           let _ = await iter.next()
-
+          
           continue
         }
       } catch is CancellationError {
@@ -406,6 +408,9 @@ public class QueryClient<Key> where Key: QueryKey {
         notifications.post(name: mutationDidChange, object: MutationUpdate(mutationId: id, update: .errored(error)))
       }
     }
+  
+    
+    print("runMutation end \(String(describing: id)) \(String(describing: param))")
   }
 
   func notifyQueryReset(for key: Key) {
@@ -476,24 +481,36 @@ public class QueryClient<Key> where Key: QueryKey {
         print("invalidated query \(String(describing: key))")
 
         // start/restart the query task
-        if let users = queryUsers[key], users > 0 {
-          let state = queryState(for: key)
-
-          let task = Task.detached { @MainActor [weak self] in
-            guard let self else { return }
-            await runQuery(key: key)
-
-            queryTasks.removeValue(forKey: key)
-            notifyQueryReset(for: key)
-          }
-
-          state.task = task
-          queryTasks[key] = task
-        }
+        ensureQueryTask(for: key)
 
         notifyQueryReset(for: key)
       }
     }
+  }
+
+  public func refetchQuery(for key: Key) {
+    let state = queryState(for: key)
+    state.forceRefetch = true
+
+    // make sure that a task is running that can listen to our refetch
+    ensureQueryTask(for: key)
+    // trigger the task to check for our force refetch
+    notifyQueryReset(for: key)
+  }
+
+  func ensureQueryTask(for key: Key) {
+    let state = queryState(for: key)
+
+    let task = Task.detached { @MainActor [weak self] in
+      guard let self else { return }
+      await runQuery(key: key)
+
+      queryTasks.removeValue(forKey: key)
+      notifyQueryReset(for: key)
+    }
+
+    state.task = task
+    queryTasks[key] = task
   }
 
   public func invalidateMutations<P>(for predicate: P, remove _: Bool = false) where P: QueryKeyPredicate, P.Key == Key {

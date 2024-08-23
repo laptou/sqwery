@@ -258,8 +258,7 @@ public class Query<Key> where Key: QueryKey {
   }
 
   public func refetch() {
-    state.forceRefetch = true
-    client.notifyQueryReset(for: key)
+    client.refetchQuery(for: key)
   }
 
   public func refetchAsync() async {
@@ -347,6 +346,14 @@ public class TypedQuery<Key, Value> where Key: QueryKey {
 
   public func refetchAsync() async {
     await inner.refetchAsync()
+  }
+
+  public func addUser() {
+    client.addQueryUser(for: key)
+  }
+
+  public func removeUser() {
+    client.removeQueryUser(for: key)
   }
 }
 

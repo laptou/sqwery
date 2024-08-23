@@ -141,18 +141,21 @@ public class Mutation<Key> where Key: QueryKey {
     client.startMutation(for: id, param: param)
   }
 
-  public func runAsync(_ param: Any? = nil) async {
+  public func runAsync(_ param: Any? = nil) async -> Any? {
     run(param)
 
     for await update in client.mutationUpdatesAsync() {
       if update.mutationId != id { continue }
       switch status {
       case .idle, .pending: continue
+      case let .success(value): return value
       default: break
       }
 
       break
     }
+    
+    return nil
   }
 }
 
@@ -205,8 +208,8 @@ public class TypedMutation<Key, Value, Param> where Key: QueryKey {
     inner.run(param)
   }
 
-  public func runAsync(_ param: Param) async {
-    await inner.runAsync(param)
+  public func runAsync(_ param: Param) async -> Value? {
+    return await inner.runAsync(param) as? Value
   }
 }
 
@@ -243,11 +246,11 @@ public class ObservedMutation<Key, Value, Param>: ObservableObject where Key: Qu
 
   public var statusPublisher: AnyPublisher<TypedDataStatus<Value>, Never> { inner.statusPublisher }
 
-  public func run(_ param: Param) {
-    inner.run(param)
+  public func run(_ param: Param)  {
+    return inner.run(param)
   }
 
-  public func runAsync(_ param: Param) async {
-    await inner.runAsync(param)
+  public func runAsync(_ param: Param) async -> Value? {
+    return await inner.runAsync(param)
   }
 }
