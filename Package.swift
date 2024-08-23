@@ -5,6 +5,9 @@ import PackageDescription
 
 let package = Package(
   name: "sqwery",
+  platforms: [
+    .iOS(.v17) // This marks the entire package as iOS 17 and up
+  ],
   products: [
     // Products define the executables and libraries a package produces, making them visible to other packages.
     .library(
@@ -13,14 +16,13 @@ let package = Package(
     ),
   ],
   dependencies: [
-    .package(url: "https://github.com/hyperoslo/Cache", .upToNextMajor(from: "6.2.0")),
+    .package(url: "https://github.com/Alamofire/Alamofire.git", from: "5.0.0"),
   ],
   targets: [
     // Targets are the basic building blocks of a package, defining a module or a test suite.
     // Targets can depend on other targets in this package and products from dependencies.
     .target(
-      name: "sqwery",
-      dependencies: [.product(name: "Cache", package: "Cache")]
+      name: "sqwery"
     ),
     .testTarget(
       name: "sqweryTests",
