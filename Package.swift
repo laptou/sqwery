@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
   name: "sqwery",
   platforms: [
-    .iOS(.v17) // This marks the entire package as iOS 17 and up
+    .iOS(.v17), // This marks the entire package as iOS 17 and up
   ],
   products: [
     // Products define the executables and libraries a package produces, making them visible to other packages.

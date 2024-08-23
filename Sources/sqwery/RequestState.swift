@@ -1,6 +1,6 @@
 import Foundation
 
-class RequestState<Result>: NSObject  {
+class RequestState<Result>: NSObject {
   var beganFetching: Date?
   var finishedFetching: Date?
   var retryCount: Int = 0
@@ -12,34 +12,34 @@ enum RequestStatus<Result> {
   case error(error: any Error)
   case pending
   case idle
-  
+
   var isIdle: Bool {
     if case .idle = self { return true }
     return false
   }
-  
+
   var isPending: Bool {
     if case .pending = self { return true }
     return false
   }
-  
+
   var isSuccess: Bool {
     if case .success = self { return true }
     return false
   }
-  
+
   var isFailure: Bool {
     if case .error = self { return true }
     return false
   }
-  
+
   var data: Result? {
-    if case .success(let value) = self { return value }
+    if case let .success(value) = self { return value }
     return nil
   }
-  
+
   var error: Error? {
-    if case .error(let error) = self { return error }
+    if case let .error(error) = self { return error }
     return nil
   }
 }
