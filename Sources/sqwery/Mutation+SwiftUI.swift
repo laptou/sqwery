@@ -8,6 +8,10 @@ public struct Mutation<K: MutationKey>: DynamicProperty {
   init(_ key: K, mutationClient: MutationClient) {
     _observer = StateObject(wrappedValue: MutationObserver(client: mutationClient, key: key))
   }
+  
+  init(_ key: K) {
+    _observer = StateObject(wrappedValue: MutationObserver(client: MutationClient.shared, key: key))
+  }
 
   public var wrappedValue: RequestStatus<K.Result> {
     observer.state.status

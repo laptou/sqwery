@@ -2,12 +2,13 @@ import Combine
 import Foundation
 
 public actor MutationClient {
+  public static let shared = MutationClient()
+  
   private let subject = PassthroughSubject<(mutationKey: AnyHashable, mutationState: Any), Never>()
 
-  func mutate<K: MutationKey>(_ key: K, parameter: K.Parameter) async -> AnyPublisher<RequestState<K.Result>, Never> {
-    var state = RequestState<K.Result>()
-    state.status = .pending
-
+  func mutate<K: MutationKey>(_ key: K, parameter: K.Parameter) async -> AnyPublisher<RequestState<K.Result, K.Progress>, Never> {
+    var state = RequestState<K.Result, K.Progress>()
+    state.status = .pending(progress: nil)
     subject.send((AnyHashable(key), state))
 
     Task {
@@ -17,7 +18,10 @@ public actor MutationClient {
 
         while true {
           do {
-            result = try await key.run(parameter: parameter)
+            result = try await key.run(parameter: parameter, onProgress: { progress in
+              state.status = .pending(progress: progress)
+              self.subject.send((AnyHashable(key), state))
+            })
             break
           } catch {
             attempt += 1
@@ -40,7 +44,7 @@ public actor MutationClient {
 
     return subject
       .filter { $0.mutationKey == AnyHashable(key) }
-      .compactMap { $0.mutationState as? RequestState<K.Result> }
+      .compactMap { $0.mutationState as? RequestState<K.Result, K.Progress> }
       .eraseToAnyPublisher()
   }
 }

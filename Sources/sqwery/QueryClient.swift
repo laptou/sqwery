@@ -3,6 +3,8 @@ import Combine
 import Foundation
 
 public actor QueryClient {
+  public static let shared = QueryClient()
+  
   private let subject = PassthroughSubject<(requestKey: AnyHashable, requestState: Any), Never>()
   private var tasks: [AnyHashable: Task<Void, Never>] = [:]
   private var subscriberCounts: [AnyHashable: Int] = [:]
@@ -43,7 +45,10 @@ public actor QueryClient {
 
   private func fetchQuery<K: QueryKey>(for key: K) async {
     while !Task.isCancelled {
-      var state: RequestState<K.Result> = await cache.get(for: key)
+      var state: RequestState<K.Result, ()> = await cache.get(for: key)
+      state.status = .pending(progress: ())
+      await cache.set(for: key, state: state)
+      subject.send((key, state))
 
       do {
         if let finishedFetching = state.finishedFetching {
@@ -135,8 +140,8 @@ public actor QueryClient {
   }
   
   public func setData<K: QueryKey>(for key: K, data: K.Result) async {
-    var state: RequestState<K.Result> = await cache.get(for: key)
-    state.status = RequestStatus.success(value: data)
+    var state: RequestState<K.Resultm ()> = await cache.get(for: key)
+    state.status = .success(value: data)
     state.finishedFetching = Date.now
     state.beganFetching = Date.now
     state.retryCount = 0

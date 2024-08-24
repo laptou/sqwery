@@ -1,16 +1,16 @@
 import Foundation
 
-public struct RequestState<Result> {
+public struct RequestState<Result, Progress> {
   var beganFetching: Date?
   var finishedFetching: Date?
   var retryCount: Int = 0
-  var status: RequestStatus<Result> = .pending
+  var status: RequestStatus<Result, Progress> = .idle
 }
 
-public enum RequestStatus<Result> {
+public enum RequestStatus<Result, Progress> {
   case success(value: Result)
   case error(error: any Error)
-  case pending
+  case pending(progress: Progress?)
   case idle
 
   var isIdle: Bool {

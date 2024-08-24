@@ -9,6 +9,10 @@ public struct Query<K: QueryKey>: DynamicProperty {
   init(_ key: K, queryClient: QueryClient) {
     _observer = ObservedObject(wrappedValue: QueryObserver(client: queryClient, key: key))
   }
+  
+  init(_ key: K) {
+    _observer = ObservedObject(wrappedValue: QueryObserver(client: QueryClient.shared, key: key))
+  }
 
   public var wrappedValue: RequestStatus<K.Result> {
     observer.status
