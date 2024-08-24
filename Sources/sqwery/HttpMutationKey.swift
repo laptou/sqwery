@@ -5,9 +5,9 @@ public protocol HttpMutationKey: MutationKey where Result: Decodable {
   associatedtype Url: URLConvertible
   associatedtype Result = Alamofire.Empty
 
-  var url: Url { get }
+  var url: Url { get async }
   var method: HTTPMethod { get }
-  var headers: [String: String] { get }
+  var headers: [String: String] { get async }
   func body(for parameter: Parameter) throws -> Data?
 
   /// Response codes that are considered valid for this request. Return nil to accept all response codes in `200..299`
@@ -34,12 +34,16 @@ public extension HttpMutationKey {
   var emptyRequestMethods: Set<HTTPMethod> { [.head] }
 
   var responseDataDecoder: any DataDecoder { JSONDecoder() }
+  
+  func body(for parameter: Parameter) throws -> Data? {
+    return nil
+  }
 
   func run(parameter: Parameter) async throws -> Result {
-    var urlRequest = try URLRequest(url: url.asURL())
+    var urlRequest = try await URLRequest(url: url.asURL())
     urlRequest.method = method
     urlRequest.httpBody = try body(for: parameter)
-    urlRequest.headers = HTTPHeaders(headers)
+    urlRequest.headers = await HTTPHeaders(headers)
 
     var dataRequest = AF.request(urlRequest)
 

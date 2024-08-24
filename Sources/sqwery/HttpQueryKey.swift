@@ -7,9 +7,9 @@ public protocol HttpQueryKey: QueryKey where Result: Decodable {
   associatedtype Url: URLConvertible
   associatedtype Result = Alamofire.Empty
 
-  var url: Url { get }
+  var url: Url { get async }
   var method: HTTPMethod { get }
-  var headers: [String: String] { get }
+  var headers: [String: String] { get async }
   var body: Data? { get throws }
 
   /// Response codes that are considered valid for this request. Return nil to accept all response codes in `200..299`. Defaults to nil.
@@ -39,10 +39,10 @@ public extension HttpQueryKey {
   var responseDataDecoder: any DataDecoder { JSONDecoder() }
 
   func run() async throws -> Result {
-    var urlRequest = try URLRequest(url: url.asURL())
+    var urlRequest = try await URLRequest(url: url.asURL())
     urlRequest.method = method
     urlRequest.httpBody = try body
-    urlRequest.headers = HTTPHeaders(headers)
+    urlRequest.headers = await HTTPHeaders(headers)
 
     var dataRequest = AF.request(urlRequest)
 
