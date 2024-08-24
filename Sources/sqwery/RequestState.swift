@@ -1,6 +1,6 @@
 import Foundation
 
-public class RequestState<Result>: NSObject {
+public struct RequestState<Result> {
   var beganFetching: Date?
   var finishedFetching: Date?
   var retryCount: Int = 0

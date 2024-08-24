@@ -8,7 +8,7 @@ public actor QueryClient {
   private var subscriberCounts: [AnyHashable: Int] = [:]
   private let cache = RequestCache()
 
-  func subscribe<K: QueryKey>(for key: K) -> AnyPublisher<RequestState<K.Result>, Never> {
+  public func subscribe<K: QueryKey>(for key: K) -> AnyPublisher<RequestState<K.Result>, Never> {
     subscriberCounts[key, default: 0] += 1
 
     if tasks[key] == nil {
@@ -43,7 +43,7 @@ public actor QueryClient {
 
   private func fetchQuery<K: QueryKey>(for key: K) async {
     while !Task.isCancelled {
-      let state: RequestState<K.Result> = await cache.get(for: key)
+      var state: RequestState<K.Result> = await cache.get(for: key)
 
       do {
         if let finishedFetching = state.finishedFetching {
@@ -55,6 +55,7 @@ public actor QueryClient {
         }
 
         state.beganFetching = Date.now
+        await cache.set(for: key, state: state)
         subject.send((key, state))
 
         var attempt = 0
@@ -65,11 +66,14 @@ public actor QueryClient {
             result = try await key.run()
             break
           } catch {
-            attempt += 1
+            state.retryCount += 1
 
-            if attempt >= key.retryLimit {
+            if state.retryCount >= key.retryLimit {
               throw error
             }
+            
+            await cache.set(for: key, state: state)
+            subject.send((key, state))
 
             try? await Task.sleep(for: key.retryDelay)
           }
@@ -77,6 +81,7 @@ public actor QueryClient {
 
         state.finishedFetching = Date.now
         state.status = .success(value: result!)
+        await cache.set(for: key, state: state)
         subject.send((key, state))
 
         try? await Task.sleep(for: key.resultLifetime)
@@ -85,6 +90,7 @@ public actor QueryClient {
       } catch {
         state.finishedFetching = Date.now
         state.status = .error(error: error)
+        await cache.set(for: key, state: state)
         subject.send((key, state))
       }
     }
@@ -97,14 +103,14 @@ public actor QueryClient {
     }
   }
 
-  func invalidate(key: some QueryKey) async {
+  public func invalidate(key: some QueryKey) async {
     await cache.clear(for: key)
     if subscriberCounts[key, default: 0] > 0 {
       restartQuery(for: key)
     }
   }
 
-  func invalidateWhere(_ predicate: (any QueryKey) -> Bool) async {
+  public func invalidateWhere(_ predicate: (any QueryKey) -> Bool) async {
     for (key, _) in tasks {
       let queryKey = key.base as! any QueryKey
       if !predicate(queryKey) { continue }
@@ -117,7 +123,7 @@ public actor QueryClient {
     }
   }
 
-  func invalidateAll() async {
+  public func invalidateAll() async {
     await cache.clearAll()
     for (key, _) in tasks {
       let queryKey = key.base as! any QueryKey
@@ -126,5 +132,14 @@ public actor QueryClient {
         restartQuery(for: queryKey)
       }
     }
+  }
+  
+  public func setData<K: QueryKey>(for key: K, data: K.Result) async {
+    var state: RequestState<K.Result> = await cache.get(for: key)
+    state.status = RequestStatus.success(value: data)
+    state.finishedFetching = Date.now
+    state.beganFetching = Date.now
+    state.retryCount = 0
+    await cache.set(for: key, state: state)
   }
 }

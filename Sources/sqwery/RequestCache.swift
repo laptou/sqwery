@@ -16,9 +16,13 @@ actor RequestCache {
       }
     } else {
       let state = RequestState<Result>()
-      cache.setObject(CacheValue(state), forKey: CacheKey(key))
+      set(for: key, state: state)
       return state
     }
+  }
+  
+  func set<Result>(for key: AnyHashable, state: RequestState<Result>) {
+    cache.setObject(CacheValue(state), forKey: CacheKey(key))
   }
 
   func clear(for key: AnyHashable) {
