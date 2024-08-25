@@ -7,5 +7,14 @@ public protocol QueryKey: Hashable {
   var retryDelay: Duration { get }
   var retryLimit: Int { get }
 
-  func run() async throws -> Result
+  func run(client: QueryClient) async throws -> Result
+  
+  func onSuccess(client: QueryClient, result: Result) async
+  func onError(client: QueryClient, error: Error) async
 }
+
+public extension QueryKey {
+  func onSuccess(client: QueryClient, result: Result) async {}
+  func onError(client: QueryClient, error: Error) async {}
+}
+

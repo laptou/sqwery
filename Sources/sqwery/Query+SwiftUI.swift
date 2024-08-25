@@ -14,7 +14,7 @@ public struct Query<K: QueryKey>: DynamicProperty {
     _observer = ObservedObject(wrappedValue: QueryObserver(client: QueryClient.shared, key: key))
   }
 
-  public var wrappedValue: RequestStatus<K.Result> {
+  public var wrappedValue: RequestStatus<K.Result, ()> {
     observer.status
   }
 

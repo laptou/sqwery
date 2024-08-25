@@ -13,20 +13,25 @@ public actor MutationClient {
 
     Task {
       do {
-        var attempt = 0
-        var result: K.Result?
+        state.retryCount = 0
 
         while true {
           do {
-            result = try await key.run(parameter: parameter, onProgress: { progress in
+            let result = try await key.run(client: self, parameter: parameter, onProgress: { progress in
               state.status = .pending(progress: progress)
               self.subject.send((AnyHashable(key), state))
             })
+            
+            state.status = .success(value: result)
+            subject.send((AnyHashable(key), state))
+            
+            await key.onSuccess(client: self, parameter: parameter, result: result)
+            
             break
           } catch {
-            attempt += 1
+            state.retryCount += 1
 
-            if attempt >= key.retryLimit {
+            if state.retryCount >= key.retryLimit {
               throw error
             }
 
@@ -34,11 +39,11 @@ public actor MutationClient {
           }
         }
 
-        state.status = .success(value: result!)
-        subject.send((AnyHashable(key), state))
       } catch {
         state.status = .error(error: error)
         subject.send((AnyHashable(key), state))
+        
+        await key.onError(client: self, parameter: parameter, error: error)
       }
     }
 

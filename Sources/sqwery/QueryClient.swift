@@ -10,7 +10,7 @@ public actor QueryClient {
   private var subscriberCounts: [AnyHashable: Int] = [:]
   private let cache = RequestCache()
 
-  public func subscribe<K: QueryKey>(for key: K) -> AnyPublisher<RequestState<K.Result>, Never> {
+  public func subscribe<K: QueryKey>(for key: K) -> AnyPublisher<RequestState<K.Result, ()>, Never> {
     subscriberCounts[key, default: 0] += 1
 
     if tasks[key] == nil {
@@ -21,7 +21,7 @@ public actor QueryClient {
 
     return subject
       .filter { $0.requestKey == AnyHashable(key) }
-      .compactMap { $0.requestState as? RequestState<K.Result> }
+      .compactMap { $0.requestState as? RequestState<K.Result, ()> }
       .handleEvents(receiveCancel: { [weak self] in
         Task { [weak self] in
           await self?.unsubscribe(for: key)
@@ -63,12 +63,18 @@ public actor QueryClient {
         await cache.set(for: key, state: state)
         subject.send((key, state))
 
-        var attempt = 0
-        var result: K.Result?
+        state.retryCount = 0
 
         while true {
           do {
-            result = try await key.run()
+            let result = try await key.run(client: self)
+            
+            state.finishedFetching = Date.now
+            state.status = .success(value: result)
+            await cache.set(for: key, state: state)
+            subject.send((key, state))
+            
+            await key.onSuccess(client: self, result: result)
             break
           } catch {
             state.retryCount += 1
@@ -84,10 +90,6 @@ public actor QueryClient {
           }
         }
 
-        state.finishedFetching = Date.now
-        state.status = .success(value: result!)
-        await cache.set(for: key, state: state)
-        subject.send((key, state))
 
         try? await Task.sleep(for: key.resultLifetime)
       } catch is CancellationError {
@@ -97,6 +99,9 @@ public actor QueryClient {
         state.status = .error(error: error)
         await cache.set(for: key, state: state)
         subject.send((key, state))
+        
+        await key.onError(client: self, error: error)
+        break
       }
     }
   }
@@ -140,7 +145,7 @@ public actor QueryClient {
   }
   
   public func setData<K: QueryKey>(for key: K, data: K.Result) async {
-    var state: RequestState<K.Resultm ()> = await cache.get(for: key)
+    var state: RequestState<K.Result, ()> = await cache.get(for: key)
     state.status = .success(value: data)
     state.finishedFetching = Date.now
     state.beganFetching = Date.now
