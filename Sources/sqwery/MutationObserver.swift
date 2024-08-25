@@ -3,7 +3,9 @@ import Foundation
 
 @MainActor
 public class MutationObserver<K: MutationKey>: ObservableObject {
-  @Published private(set) var state = RequestState<K.Result>()
+  @Published private(set) var state = RequestState<K.Result, K.Progress>()
+  var status: RequestStatus<K.Result, K.Progress> { state.status }
+  
   private var cancellable: AnyCancellable?
   private let client: MutationClient
   private let key: K

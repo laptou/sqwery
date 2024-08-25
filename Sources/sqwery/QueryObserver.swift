@@ -3,8 +3,8 @@ import Foundation
 
 @MainActor
 public class QueryObserver<K: QueryKey>: ObservableObject {
-  @Published private(set) var state: RequestState<K.Result> = RequestState()
-  var status: RequestStatus<K.Result> { state.status }
+  @Published private(set) var state: RequestState<K.Result, ()> = RequestState()
+  var status: RequestStatus<K.Result, ()> { state.status }
 
   private var cancellable: AnyCancellable?
   private let client: QueryClient

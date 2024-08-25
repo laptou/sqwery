@@ -3,10 +3,10 @@ import Foundation
 actor RequestCache {
   private let cache = NSCache<CacheKey, CacheValue>()
 
-  func get<Result>(for key: AnyHashable) -> RequestState<Result> {
+  func get<Result, Progress>(for key: AnyHashable) -> RequestState<Result, Progress> {
     let cacheKey = CacheKey(key)
     if let cacheValue = cache.object(forKey: cacheKey) {
-      if let state = cacheValue.value as? RequestState<Result> {
+      if let state = cacheValue.value as? RequestState<Result, Progress> {
         return state
       } else {
         // this should never happen
@@ -15,13 +15,13 @@ actor RequestCache {
         #endif
       }
     } else {
-      let state = RequestState<Result>()
+      let state = RequestState<Result, Progress>()
       set(for: key, state: state)
       return state
     }
   }
   
-  func set<Result>(for key: AnyHashable, state: RequestState<Result>) {
+  func set<Result, Progress>(for key: AnyHashable, state: RequestState<Result, Progress>) {
     cache.setObject(CacheValue(state), forKey: CacheKey(key))
   }
 

@@ -39,7 +39,7 @@ public extension HttpMutationKey {
     return nil
   }
 
-  func run(parameter: Parameter) async throws -> Result {
+  func run(parameter: Parameter, onProgress: @escaping (Progress) -> Void) async throws -> Result {
     var urlRequest = try await URLRequest(url: url.asURL())
     urlRequest.method = method
     urlRequest.httpBody = try body(for: parameter)
@@ -80,5 +80,11 @@ public protocol HttpJsonMutationKey: HttpMutationKey {
 public extension HttpJsonMutationKey {
   func body(for parameter: Parameter) throws -> Data? {
     try JSONEncoder().encode(bodyData(for: parameter))
+  }
+}
+
+public extension HttpJsonMutationKey where Self.Body == Self.Parameter {
+  func bodyData(for parameter: Parameter) throws -> Body {
+    parameter
   }
 }
