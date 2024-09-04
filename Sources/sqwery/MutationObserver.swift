@@ -3,34 +3,35 @@ import Foundation
 
 @MainActor
 public class MutationObserver<K: MutationKey>: ObservableObject {
-  @Published private(set) var state = RequestState<K.Result, K.Progress>()
-  var status: RequestStatus<K.Result, K.Progress> { state.status }
+  @Published public private(set) var state = RequestState<K.Result, K.Progress>()
+  public var status: RequestStatus<K.Result, K.Progress> { state.status }
   
   private var cancellable: AnyCancellable?
   private let client: MutationClient
   private let key: K
 
-  init(client: MutationClient, key: K) {
+  public init(client: MutationClient, key: K) {
     self.client = client
     self.key = key
   }
-
-  func mutate(parameter: K.Parameter) {
-    Task {
-      cancellable = await client.mutate(key, parameter: parameter)
-        .receive(on: DispatchQueue.main)
-        .sink { [weak self] state in
-          self?.state = state
-        }
-    }
+  
+  public init(key: K) {
+    self.client = MutationClient.shared
+    self.key = key
   }
 
-  func mutateAsync(parameter: K.Parameter) async -> Result<K.Result, Error> {
-    let stream = await client.mutate(key, parameter: parameter)
-      .receive(on: DispatchQueue.main)
-      .values
+  public func mutate(parameter: K.Parameter) {
+    let task = Task {
+      for await state in await client.mutate(key, parameter: parameter) {
+        self.state = state
+      }
+    }
+    
+    self.cancellable = AnyCancellable({ task.cancel() })
+  }
 
-    for await state in stream {
+  public func mutateAsync(parameter: K.Parameter) async -> Result<K.Result, Error> {
+    for await state in await client.mutate(key, parameter: parameter) {
       switch state.status {
       case let .success(value: value):
         return .success(value)
@@ -40,7 +41,7 @@ public class MutationObserver<K: MutationKey>: ObservableObject {
       }
     }
 
-    return .failure(MutationObserverError.canceled)
+    return .failure( ObserverError.canceled)
   }
 
   func cancel() {
@@ -48,6 +49,6 @@ public class MutationObserver<K: MutationKey>: ObservableObject {
   }
 }
 
-public enum MutationObserverError: Error {
+public enum ObserverError: Error {
   case canceled
 }

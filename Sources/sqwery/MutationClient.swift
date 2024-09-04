@@ -6,7 +6,7 @@ public actor MutationClient {
   
   private let subject = PassthroughSubject<(mutationKey: AnyHashable, mutationState: Any), Never>()
 
-  func mutate<K: MutationKey>(_ key: K, parameter: K.Parameter) async -> AnyPublisher<RequestState<K.Result, K.Progress>, Never> {
+  public func mutate<K: MutationKey>(_ key: K, parameter: K.Parameter) async -> AsyncStream<RequestState<K.Result, K.Progress>> {
     var state = RequestState<K.Result, K.Progress>()
     state.status = .pending(progress: nil)
     subject.send((AnyHashable(key), state))
@@ -50,6 +50,6 @@ public actor MutationClient {
     return subject
       .filter { $0.mutationKey == AnyHashable(key) }
       .compactMap { $0.mutationState as? RequestState<K.Result, K.Progress> }
-      .eraseToAnyPublisher()
+      .stream
   }
 }

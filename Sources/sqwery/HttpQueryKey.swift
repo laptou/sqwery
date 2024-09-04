@@ -38,7 +38,7 @@ public extension HttpQueryKey {
 
   var responseDataDecoder: any DataDecoder { JSONDecoder() }
 
-  func run() async throws -> Result {
+  func run(client: QueryClient) async throws -> Result {
     var urlRequest = try await URLRequest(url: url.asURL())
     urlRequest.method = method
     urlRequest.httpBody = try body
@@ -65,19 +65,4 @@ public extension HttpQueryKey {
     let value = try await task.value
     return value
   }
-}
-
-/// Convenience protocol for HTTP queries with JSON bodies, provides a default implementation of `run()` which uses Alamofire to send the request
-/// and a default implementation of `body` which serializes `bodyData` to JSON.
-public protocol HttpJsonQueryKey: HttpQueryKey {
-  associatedtype Body: Encodable
-
-  /// The data of the request body, which will be serialized as JSON.
-  var bodyData: Body { get }
-}
-
-public extension HttpJsonQueryKey {
-  var headers: [String: String] { ["accept": "application/json"] }
-
-  var body: Data? { get throws { try JSONEncoder().encode(bodyData) } }
 }

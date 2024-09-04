@@ -6,11 +6,11 @@ import SwiftUI
 public struct Query<K: QueryKey>: DynamicProperty {
   @ObservedObject private var observer: QueryObserver<K>
 
-  init(_ key: K, queryClient: QueryClient) {
+  public init(_ key: K, queryClient: QueryClient) {
     _observer = ObservedObject(wrappedValue: QueryObserver(client: queryClient, key: key))
   }
   
-  init(_ key: K) {
+  public init(_ key: K) {
     _observer = ObservedObject(wrappedValue: QueryObserver(client: QueryClient.shared, key: key))
   }
 

@@ -3,8 +3,8 @@ import Foundation
 
 @MainActor
 public class QueryObserver<K: QueryKey>: ObservableObject {
-  @Published private(set) var state: RequestState<K.Result, ()> = RequestState()
-  var status: RequestStatus<K.Result, ()> { state.status }
+  @Published public private(set) var state: RequestState<K.Result, ()> = RequestState()
+  public var status: RequestStatus<K.Result, ()> { state.status }
 
   private var cancellable: AnyCancellable?
   private let client: QueryClient
@@ -13,22 +13,37 @@ public class QueryObserver<K: QueryKey>: ObservableObject {
   init(client: QueryClient, key: K) {
     self.client = client
     self.key = key
-  }
-
-  func listen() {
-    Task {
-      cancellable = await client.subscribe(for: key)
-        .receive(on: DispatchQueue.main)
-        .sink { [weak self] state in
-          self?.state = state
-        }
+    
+    let task = Task {
+      for await state in await client.subscribe(for: key) {
+        self.state = state
+      }
     }
+    
+    self.cancellable = AnyCancellable({ task.cancel() })
   }
 
-  func invalidate() {
+  public func invalidate() {
     Task {
       await client.invalidate(key: key)
     }
+  }
+  
+  public func wait() async -> Result<K.Result, Error> {
+    for await update in await client.subscribe(for: key) {
+      switch update.status {
+      case let .success(value: value): return .success(value)
+      case let .error(error: error): return .failure(error)
+      default: continue
+      }
+    }
+    
+    return .failure(ObserverError.canceled)
+  }
+  
+  public func refetch() async -> Result<K.Result, Error> {
+    await client.invalidate(key: key)
+    return await wait()
   }
 
   func cancel() {

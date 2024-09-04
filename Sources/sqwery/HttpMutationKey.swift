@@ -5,10 +5,10 @@ public protocol HttpMutationKey: MutationKey where Result: Decodable {
   associatedtype Url: URLConvertible
   associatedtype Result = Alamofire.Empty
 
-  var url: Url { get async }
-  var method: HTTPMethod { get }
-  var headers: [String: String] { get async }
-  func body(for parameter: Parameter) throws -> Data?
+  func url(for parameter: Parameter) async -> Url
+  func method(for parameter: Parameter) async -> HTTPMethod
+  func headers(for parameter: Parameter) async -> [String: String]
+  func body(for parameter: Parameter) async throws -> Data?
 
   /// Response codes that are considered valid for this request. Return nil to accept all response codes in `200..299`
   var validResponseCodes: Set<Int>? { get }
@@ -25,7 +25,13 @@ public protocol HttpMutationKey: MutationKey where Result: Decodable {
 }
 
 public extension HttpMutationKey {
-  var headers: [String: String] { [:] }
+  func headers(for parameter: Parameter) async -> [String: String] {
+    [:]
+  }
+  
+  func body(for parameter: Parameter) async throws -> Data? {
+    return nil
+  }
 
   var validResponseCodes: Set<Int>? { nil }
   var validContentTypes: Set<String>? { nil }
@@ -34,16 +40,12 @@ public extension HttpMutationKey {
   var emptyRequestMethods: Set<HTTPMethod> { [.head] }
 
   var responseDataDecoder: any DataDecoder { JSONDecoder() }
-  
-  func body(for parameter: Parameter) throws -> Data? {
-    return nil
-  }
 
-  func run(parameter: Parameter, onProgress: @escaping (Progress) -> Void) async throws -> Result {
-    var urlRequest = try await URLRequest(url: url.asURL())
-    urlRequest.method = method
-    urlRequest.httpBody = try body(for: parameter)
-    urlRequest.headers = await HTTPHeaders(headers)
+  func run(client: MutationClient, parameter: Parameter, onProgress: @escaping (Progress) -> Void) async throws -> Result {
+    var urlRequest = try await URLRequest(url: url(for: parameter).asURL())
+    urlRequest.method = await method(for: parameter)
+    urlRequest.httpBody = try await body(for: parameter)
+    urlRequest.headers = await HTTPHeaders(headers(for: parameter))
 
     var dataRequest = AF.request(urlRequest)
 
@@ -71,20 +73,20 @@ public extension HttpMutationKey {
 /// Convenience protocol for HTTP queries with JSON bodies, provides a default implementation of `run()` which uses Alamofire to send the request
 /// and a default implementation of `body` which serializes `bodyData` to JSON.
 public protocol HttpJsonMutationKey: HttpMutationKey {
-  associatedtype Body: Encodable
+  associatedtype Body: Encodable = Alamofire.Empty
 
   /// The data of the request body, which will be serialized as JSON.
-  func bodyData(for parameter: Parameter) throws -> Body
+  func bodyData(for parameter: Parameter) async throws -> Body
 }
 
 public extension HttpJsonMutationKey {
-  func body(for parameter: Parameter) throws -> Data? {
-    try JSONEncoder().encode(bodyData(for: parameter))
+  func body(for parameter: Parameter) async throws -> Data? {
+    try await JSONEncoder().encode(bodyData(for: parameter))
   }
 }
 
 public extension HttpJsonMutationKey where Self.Body == Self.Parameter {
-  func bodyData(for parameter: Parameter) throws -> Body {
+  func bodyData(for parameter: Parameter) async throws -> Body {
     parameter
   }
 }

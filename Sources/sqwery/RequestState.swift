@@ -13,32 +13,32 @@ public enum RequestStatus<Result, Progress> {
   case pending(progress: Progress?)
   case idle
 
-  var isIdle: Bool {
+  public var isIdle: Bool {
     if case .idle = self { return true }
     return false
   }
 
-  var isPending: Bool {
+  public var isPending: Bool {
     if case .pending = self { return true }
     return false
   }
 
-  var isSuccess: Bool {
+  public var isSuccess: Bool {
     if case .success = self { return true }
     return false
   }
 
-  var isFailure: Bool {
+  public var isFailure: Bool {
     if case .error = self { return true }
     return false
   }
 
-  var data: Result? {
+  public var data: Result? {
     if case let .success(value) = self { return value }
     return nil
   }
 
-  var error: Error? {
+  public var error: Error? {
     if case let .error(error) = self { return error }
     return nil
   }

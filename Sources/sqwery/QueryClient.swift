@@ -10,7 +10,7 @@ public actor QueryClient {
   private var subscriberCounts: [AnyHashable: Int] = [:]
   private let cache = RequestCache()
 
-  public func subscribe<K: QueryKey>(for key: K) -> AnyPublisher<RequestState<K.Result, ()>, Never> {
+  public func subscribe<K: QueryKey>(for key: K) -> AsyncStream<RequestState<K.Result, ()>> {
     subscriberCounts[key, default: 0] += 1
 
     if tasks[key] == nil {
@@ -27,7 +27,7 @@ public actor QueryClient {
           await self?.unsubscribe(for: key)
         }
       })
-      .eraseToAnyPublisher()
+      .stream
   }
 
   private func unsubscribe(for key: AnyHashable) {
