@@ -5,7 +5,7 @@ import Foundation
 public class MutationObserver<K: MutationKey>: ObservableObject {
   @Published public private(set) var state = RequestState<K.Result, K.Progress>()
   public var status: RequestStatus<K.Result, K.Progress> { state.status }
-  
+
   private var cancellable: AnyCancellable?
   private let client: MutationClient
   private let key: K
@@ -14,24 +14,30 @@ public class MutationObserver<K: MutationKey>: ObservableObject {
     self.client = client
     self.key = key
   }
-  
+
   public init(key: K) {
-    self.client = MutationClient.shared
+    client = MutationClient.shared
     self.key = key
   }
 
-  public func mutate(parameter: K.Parameter) {
+  public func mutate(_ parameter: K.Parameter) {
+    cancellable?.cancel()
+
     let task = Task {
       for await state in await client.mutate(key, parameter: parameter) {
         self.state = state
       }
     }
-    
-    self.cancellable = AnyCancellable({ task.cancel() })
+
+    cancellable = AnyCancellable { task.cancel() }
   }
 
-  public func mutateAsync(parameter: K.Parameter) async -> Result<K.Result, Error> {
+  public func mutateAsync(_ parameter: K.Parameter) async -> Result<K.Result, Error> {
+    cancellable?.cancel()
+
     for await state in await client.mutate(key, parameter: parameter) {
+      self.state = state
+
       switch state.status {
       case let .success(value: value):
         return .success(value)
@@ -41,7 +47,7 @@ public class MutationObserver<K: MutationKey>: ObservableObject {
       }
     }
 
-    return .failure( ObserverError.canceled)
+    return .failure(ObserverError.canceled)
   }
 
   func cancel() {

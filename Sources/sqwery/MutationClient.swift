@@ -3,7 +3,7 @@ import Foundation
 
 public actor MutationClient {
   public static let shared = MutationClient()
-  
+
   private let subject = PassthroughSubject<(mutationKey: AnyHashable, mutationState: Any), Never>()
 
   public func mutate<K: MutationKey>(_ key: K, parameter: K.Parameter) async -> AsyncStream<RequestState<K.Result, K.Progress>> {
@@ -21,12 +21,12 @@ public actor MutationClient {
               state.status = .pending(progress: progress)
               self.subject.send((AnyHashable(key), state))
             })
-            
+
             state.status = .success(value: result)
             subject.send((AnyHashable(key), state))
-            
+
             await key.onSuccess(client: self, parameter: parameter, result: result)
-            
+
             break
           } catch {
             state.retryCount += 1
@@ -42,7 +42,7 @@ public actor MutationClient {
       } catch {
         state.status = .error(error: error)
         subject.send((AnyHashable(key), state))
-        
+
         await key.onError(client: self, parameter: parameter, error: error)
       }
     }

@@ -4,7 +4,7 @@ public struct RequestState<Result, Progress> {
   var beganFetching: Date?
   var finishedFetching: Date?
   var retryCount: Int = 0
-  var status: RequestStatus<Result, Progress> = .idle
+  public var status: RequestStatus<Result, Progress> = .idle
 }
 
 public enum RequestStatus<Result, Progress> {

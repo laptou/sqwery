@@ -38,7 +38,7 @@ public extension HttpQueryKey {
 
   var responseDataDecoder: any DataDecoder { JSONDecoder() }
 
-  func run(client: QueryClient) async throws -> Result {
+  func run(client _: QueryClient) async throws -> Result {
     var urlRequest = try await URLRequest(url: url.asURL())
     urlRequest.method = method
     urlRequest.httpBody = try body

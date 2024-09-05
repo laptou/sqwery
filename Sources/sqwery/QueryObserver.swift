@@ -3,8 +3,8 @@ import Foundation
 
 @MainActor
 public class QueryObserver<K: QueryKey>: ObservableObject {
-  @Published public private(set) var state: RequestState<K.Result, ()> = RequestState()
-  public var status: RequestStatus<K.Result, ()> { state.status }
+  @Published public private(set) var state: RequestState<K.Result, Void> = RequestState()
+  public var status: RequestStatus<K.Result, Void> { state.status }
 
   private var cancellable: AnyCancellable?
   private let client: QueryClient
@@ -13,14 +13,14 @@ public class QueryObserver<K: QueryKey>: ObservableObject {
   init(client: QueryClient, key: K) {
     self.client = client
     self.key = key
-    
+
     let task = Task {
       for await state in await client.subscribe(for: key) {
         self.state = state
       }
     }
-    
-    self.cancellable = AnyCancellable({ task.cancel() })
+
+    cancellable = AnyCancellable { task.cancel() }
   }
 
   public func invalidate() {
@@ -28,7 +28,7 @@ public class QueryObserver<K: QueryKey>: ObservableObject {
       await client.invalidate(key: key)
     }
   }
-  
+
   public func wait() async -> Result<K.Result, Error> {
     for await update in await client.subscribe(for: key) {
       switch update.status {
@@ -37,10 +37,10 @@ public class QueryObserver<K: QueryKey>: ObservableObject {
       default: continue
       }
     }
-    
+
     return .failure(ObserverError.canceled)
   }
-  
+
   public func refetch() async -> Result<K.Result, Error> {
     await client.invalidate(key: key)
     return await wait()

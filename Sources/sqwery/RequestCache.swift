@@ -20,8 +20,8 @@ actor RequestCache {
       return state
     }
   }
-  
-  func set<Result, Progress>(for key: AnyHashable, state: RequestState<Result, Progress>) {
+
+  func set(for key: AnyHashable, state: RequestState<some Any, some Any>) {
     cache.setObject(CacheValue(state), forKey: CacheKey(key))
   }
 

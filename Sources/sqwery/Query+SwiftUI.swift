@@ -4,21 +4,21 @@ import SwiftUI
 
 @propertyWrapper
 public struct Query<K: QueryKey>: DynamicProperty {
-  @ObservedObject private var observer: QueryObserver<K>
+  @StateObject private var observer: QueryObserver<K>
 
   public init(_ key: K, queryClient: QueryClient) {
-    _observer = ObservedObject(wrappedValue: QueryObserver(client: queryClient, key: key))
-  }
-  
-  public init(_ key: K) {
-    _observer = ObservedObject(wrappedValue: QueryObserver(client: QueryClient.shared, key: key))
+    _observer = StateObject(wrappedValue: QueryObserver(client: queryClient, key: key))
   }
 
-  public var wrappedValue: RequestStatus<K.Result, ()> {
+  public init(_ key: K) {
+    _observer = StateObject(wrappedValue: QueryObserver(client: QueryClient.shared, key: key))
+  }
+
+  public var projectedValue: RequestStatus<K.Result, Void> {
     observer.status
   }
 
-  public var projectedValue: QueryObserver<K> {
+  public var wrappedValue: QueryObserver<K> {
     observer
   }
 }

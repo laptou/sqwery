@@ -25,12 +25,12 @@ public protocol HttpMutationKey: MutationKey where Result: Decodable {
 }
 
 public extension HttpMutationKey {
-  func headers(for parameter: Parameter) async -> [String: String] {
+  func headers(for _: Parameter) async -> [String: String] {
     [:]
   }
-  
-  func body(for parameter: Parameter) async throws -> Data? {
-    return nil
+
+  func body(for _: Parameter) async throws -> Data? {
+    nil
   }
 
   var validResponseCodes: Set<Int>? { nil }
@@ -41,7 +41,7 @@ public extension HttpMutationKey {
 
   var responseDataDecoder: any DataDecoder { JSONDecoder() }
 
-  func run(client: MutationClient, parameter: Parameter, onProgress: @escaping (Progress) -> Void) async throws -> Result {
+  func run(client _: MutationClient, parameter: Parameter, onProgress _: @escaping (Progress) -> Void) async throws -> Result {
     var urlRequest = try await URLRequest(url: url(for: parameter).asURL())
     urlRequest.method = await method(for: parameter)
     urlRequest.httpBody = try await body(for: parameter)
@@ -85,8 +85,14 @@ public extension HttpJsonMutationKey {
   }
 }
 
-public extension HttpJsonMutationKey where Self.Body == Self.Parameter {
-  func bodyData(for parameter: Parameter) async throws -> Body {
-    parameter
+//public extension HttpJsonMutationKey where Self.Body == Self.Parameter {
+//  func bodyData(for parameter: Parameter) async throws -> Body {
+//    parameter
+//  }
+//}
+
+public extension HttpJsonMutationKey where Self.Body == Alamofire.Empty {
+  func bodyData(for _: Parameter) async throws -> Body {
+    Empty.value
   }
 }

@@ -13,6 +13,6 @@ public protocol MutationKey: Hashable {
 }
 
 public extension MutationKey {
-  func onSuccess(client: MutationClient, parameter: Parameter, result: Result) async {}
-  func onError(client: MutationClient, parameter: Parameter, error: Error) async {}
+  func onSuccess(client _: MutationClient, parameter _: Parameter, result _: Result) async {}
+  func onError(client _: MutationClient, parameter _: Parameter, error _: Error) async {}
 }

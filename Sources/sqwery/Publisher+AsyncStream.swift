@@ -1,37 +1,37 @@
 // https://forums.swift.org/t/how-to-use-combine-publisher-with-swift-concurrency-publisher-values-could-miss-events/67193/9
 
-import Foundation
 @preconcurrency import Combine
+import Foundation
 
-extension Publisher where Failure == Never {
-  public var stream: AsyncStream<Output> {
+public extension Publisher where Failure == Never {
+  var stream: AsyncStream<Output> {
     AsyncStream { continuation in
-      let cancellable = self.sink { completion in
+      let cancellable = self.sink { _ in
         continuation.finish()
       } receiveValue: { value in
         continuation.yield(value)
       }
-      continuation.onTermination = { continuation in
+      continuation.onTermination = { _ in
         cancellable.cancel()
       }
     }
   }
 }
 
-extension Publisher where Failure: Error {
-  public var stream: AsyncThrowingStream<Output, Error> {
+public extension Publisher where Failure: Error {
+  var stream: AsyncThrowingStream<Output, Error> {
     AsyncThrowingStream<Output, Error> { continuation in
       let cancellable = self.sink { completion in
         switch completion {
         case .finished:
           continuation.finish()
-        case .failure(let error):
+        case let .failure(error):
           continuation.finish(throwing: error)
         }
       } receiveValue: { value in
         continuation.yield(value)
       }
-      continuation.onTermination = { continuation in
+      continuation.onTermination = { _ in
         cancellable.cancel()
       }
     }

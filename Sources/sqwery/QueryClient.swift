@@ -4,13 +4,13 @@ import Foundation
 
 public actor QueryClient {
   public static let shared = QueryClient()
-  
+
   private let subject = PassthroughSubject<(requestKey: AnyHashable, requestState: Any), Never>()
   private var tasks: [AnyHashable: Task<Void, Never>] = [:]
   private var subscriberCounts: [AnyHashable: Int] = [:]
   private let cache = RequestCache()
 
-  public func subscribe<K: QueryKey>(for key: K) -> AsyncStream<RequestState<K.Result, ()>> {
+  public func subscribe<K: QueryKey>(for key: K) -> AsyncStream<RequestState<K.Result, Void>> {
     subscriberCounts[key, default: 0] += 1
 
     if tasks[key] == nil {
@@ -21,7 +21,7 @@ public actor QueryClient {
 
     return subject
       .filter { $0.requestKey == AnyHashable(key) }
-      .compactMap { $0.requestState as? RequestState<K.Result, ()> }
+      .compactMap { $0.requestState as? RequestState<K.Result, Void> }
       .handleEvents(receiveCancel: { [weak self] in
         Task { [weak self] in
           await self?.unsubscribe(for: key)
@@ -45,7 +45,7 @@ public actor QueryClient {
 
   private func fetchQuery<K: QueryKey>(for key: K) async {
     while !Task.isCancelled {
-      var state: RequestState<K.Result, ()> = await cache.get(for: key)
+      var state: RequestState<K.Result, Void> = await cache.get(for: key)
       state.status = .pending(progress: ())
       await cache.set(for: key, state: state)
       subject.send((key, state))
@@ -68,12 +68,12 @@ public actor QueryClient {
         while true {
           do {
             let result = try await key.run(client: self)
-            
+
             state.finishedFetching = Date.now
             state.status = .success(value: result)
             await cache.set(for: key, state: state)
             subject.send((key, state))
-            
+
             await key.onSuccess(client: self, result: result)
             break
           } catch {
@@ -82,14 +82,13 @@ public actor QueryClient {
             if state.retryCount >= key.retryLimit {
               throw error
             }
-            
+
             await cache.set(for: key, state: state)
             subject.send((key, state))
 
             try? await Task.sleep(for: key.retryDelay)
           }
         }
-
 
         try? await Task.sleep(for: key.resultLifetime)
       } catch is CancellationError {
@@ -99,7 +98,7 @@ public actor QueryClient {
         state.status = .error(error: error)
         await cache.set(for: key, state: state)
         subject.send((key, state))
-        
+
         await key.onError(client: self, error: error)
         break
       }
@@ -143,9 +142,9 @@ public actor QueryClient {
       }
     }
   }
-  
+
   public func setData<K: QueryKey>(for key: K, data: K.Result) async {
-    var state: RequestState<K.Result, ()> = await cache.get(for: key)
+    var state: RequestState<K.Result, Void> = await cache.get(for: key)
     state.status = .success(value: data)
     state.finishedFetching = Date.now
     state.beganFetching = Date.now
