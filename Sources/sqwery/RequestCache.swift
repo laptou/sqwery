@@ -12,6 +12,8 @@ actor RequestCache {
         // this should never happen
         #if DEBUG
           fatalError("could not cast request state type")
+        #else
+          return RequestState<Result, Progress>()
         #endif
       }
     } else {

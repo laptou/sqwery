@@ -1,6 +1,7 @@
 import Alamofire
 import Combine
 import Foundation
+import os
 
 public actor QueryClient {
   public static let shared = QueryClient()
@@ -44,7 +45,16 @@ public actor QueryClient {
   }
 
   private func fetchQuery<K: QueryKey>(for key: K) async {
+    let logger = Logger(
+      subsystem: "sqwery",
+      category: "query \(String(describing: key))"
+    )
+    
+    logger.debug("beginning fetch")
+    
     while !Task.isCancelled {
+      logger.trace("beginning fetch cycle")
+      
       var state: RequestState<K.Result, Void> = await cache.get(for: key)
       state.status = .pending(progress: ())
       await cache.set(for: key, state: state)
@@ -53,7 +63,9 @@ public actor QueryClient {
       do {
         if let finishedFetching = state.finishedFetching {
           let timeSinceFetch = Duration.seconds(Date.now.timeIntervalSince(finishedFetching))
+          logger.trace("refetch detected, result is \(timeSinceFetch) old")
           if timeSinceFetch < key.resultLifetime {
+            logger.trace("refetch detected, result is too old, delaying")
             try? await Task.sleep(for: key.resultLifetime - timeSinceFetch)
             continue
           }
@@ -67,7 +79,9 @@ public actor QueryClient {
 
         while true {
           do {
+            logger.trace("running fetch function")
             let result = try await key.run(client: self)
+            logger.trace("completed fetch function")
 
             state.finishedFetching = Date.now
             state.status = .success(value: result)
@@ -80,8 +94,11 @@ public actor QueryClient {
             state.retryCount += 1
 
             if state.retryCount >= key.retryLimit {
+              logger.error("fetch failed, exceeded retry limit: \(error)")
               throw error
             }
+            
+            logger.warning("fetch failed, retrying: \(error)")
 
             await cache.set(for: key, state: state)
             subject.send((key, state))
@@ -92,6 +109,7 @@ public actor QueryClient {
 
         try? await Task.sleep(for: key.resultLifetime)
       } catch is CancellationError {
+        logger.info("fetch cancelled, exiting loop")
         break
       } catch {
         state.finishedFetching = Date.now
@@ -103,6 +121,8 @@ public actor QueryClient {
         break
       }
     }
+    
+    logger.info("fetch loop exiting")
   }
 
   private func restartQuery(for key: some QueryKey) {
