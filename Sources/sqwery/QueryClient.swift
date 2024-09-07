@@ -2,14 +2,32 @@ import Alamofire
 import Combine
 import Foundation
 import os
+import Semaphore
 
 public actor QueryClient {
   public static let shared = QueryClient()
 
   private let subject = PassthroughSubject<(requestKey: AnyHashable, requestState: Any), Never>()
   private var tasks: [AnyHashable: Task<Void, Never>] = [:]
+  private var semaphores: [AnyHashable: AsyncSemaphore] = [:]
   private var subscriberCounts: [AnyHashable: Int] = [:]
   private let cache = RequestCache()
+  
+  private func ensureSemaphore<K: QueryKey>(for key: K) -> AsyncSemaphore {
+    if semaphores[key] == nil {
+      semaphores[key] = AsyncSemaphore(value: 1)
+    }
+    
+    return semaphores[key]!
+  }
+  
+  private func withLock<T, K: QueryKey>(for key: K, fn: () async -> T) async -> T {
+    let semaphore = ensureSemaphore(for: key)
+    await semaphore.wait()
+    defer { semaphore.signal() }
+    
+    return await fn()
+  }
 
   public func subscribe<K: QueryKey>(for key: K) -> AsyncStream<RequestState<K.Result, Void>> {
     subscriberCounts[key, default: 0] += 1
@@ -31,29 +49,47 @@ public actor QueryClient {
       .stream
   }
 
-  private func unsubscribe(for key: AnyHashable) {
+  private func unsubscribe<K: QueryKey>(for key: K) async {
     subscriberCounts[key, default: 1] -= 1
     if subscriberCounts[key] == 0 {
-      cancel(for: key)
+      await cancel(for: key)
     }
   }
 
-  private func cancel(for key: AnyHashable) {
+  private func cancel<K: QueryKey>(for key: K) async {
     tasks[key]?.cancel()
+    
+    // acquire lock on task to ensure that it actually cancelled
+    let semaphore = ensureSemaphore(for: key)
+    await semaphore.wait()
+    semaphore.signal()
+    
     tasks.removeValue(forKey: key)
     subscriberCounts.removeValue(forKey: key)
   }
 
   private func fetchQuery<K: QueryKey>(for key: K) async {
+    let semaphore = ensureSemaphore(for: key)
+    do {
+      try await semaphore.waitUnlessCancelled()
+    } catch {
+      return
+    }
+    
     let logger = Logger(
       subsystem: "sqwery",
       category: "query \(String(describing: key))"
     )
     
-    logger.debug("beginning fetch")
+    logger.debug("fetch loop starting")
+    
+    defer {
+      semaphore.signal()
+      logger.info("fetch loop exiting")
+    }
     
     while !Task.isCancelled {
-      logger.trace("beginning fetch cycle")
+      logger.trace("fetch loop iter")
       
       var state: RequestState<K.Result, Void> = await cache.get(for: key)
       state.status = .pending(progress: ())
@@ -121,8 +157,6 @@ public actor QueryClient {
         break
       }
     }
-    
-    logger.info("fetch loop exiting")
   }
 
   private func restartQuery(for key: some QueryKey) {
@@ -164,11 +198,17 @@ public actor QueryClient {
   }
 
   public func setData<K: QueryKey>(for key: K, data: K.Result) async {
+    await cancel(for: key)
+    
     var state: RequestState<K.Result, Void> = await cache.get(for: key)
     state.status = .success(value: data)
     state.finishedFetching = Date.now
     state.beganFetching = Date.now
     state.retryCount = 0
     await cache.set(for: key, state: state)
+    
+    subject.send((key, state))
+    await invalidate(key: key)
+    print("set query data for \(key)")
   }
 }
