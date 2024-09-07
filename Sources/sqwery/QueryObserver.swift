@@ -16,12 +16,12 @@ public class QueryObserver<K: QueryKey>: ObservableObject {
 
     let task = Task {
       print("queryobserver \(key) task start")
-      
+
       for await state in await client.subscribe(for: key) {
         self.state = state
         print("queryobserver \(key) task update, status = \(self.state.status)")
       }
-      
+
       print("queryobserver \(key) task exit")
     }
 

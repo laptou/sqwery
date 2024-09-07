@@ -12,20 +12,20 @@ public actor QueryClient {
   private var semaphores: [AnyHashable: AsyncSemaphore] = [:]
   private var subscriberCounts: [AnyHashable: Int] = [:]
   private let cache = RequestCache()
-  
-  private func ensureSemaphore<K: QueryKey>(for key: K) -> AsyncSemaphore {
+
+  private func ensureSemaphore(for key: some QueryKey) -> AsyncSemaphore {
     if semaphores[key] == nil {
       semaphores[key] = AsyncSemaphore(value: 1)
     }
-    
+
     return semaphores[key]!
   }
-  
-  private func withLock<T, K: QueryKey>(for key: K, fn: () async -> T) async -> T {
+
+  private func withLock<T>(for key: some QueryKey, fn: () async -> T) async -> T {
     let semaphore = ensureSemaphore(for: key)
     await semaphore.wait()
     defer { semaphore.signal() }
-    
+
     return await fn()
   }
 
@@ -49,21 +49,21 @@ public actor QueryClient {
       .stream
   }
 
-  private func unsubscribe<K: QueryKey>(for key: K) async {
+  private func unsubscribe(for key: some QueryKey) async {
     subscriberCounts[key, default: 1] -= 1
     if subscriberCounts[key] == 0 {
       await cancel(for: key)
     }
   }
 
-  private func cancel<K: QueryKey>(for key: K) async {
+  private func cancel(for key: some QueryKey) async {
     tasks[key]?.cancel()
-    
+
     // acquire lock on task to ensure that it actually cancelled
     let semaphore = ensureSemaphore(for: key)
     await semaphore.wait()
     semaphore.signal()
-    
+
     tasks.removeValue(forKey: key)
     subscriberCounts.removeValue(forKey: key)
   }
@@ -75,22 +75,22 @@ public actor QueryClient {
     } catch {
       return
     }
-    
+
     let logger = Logger(
       subsystem: "sqwery",
       category: "query \(String(describing: key))"
     )
-    
+
     logger.debug("fetch loop starting")
-    
+
     defer {
       semaphore.signal()
       logger.info("fetch loop exiting")
     }
-    
+
     while !Task.isCancelled {
       logger.trace("fetch loop iter")
-      
+
       var state: RequestState<K.Result, Void> = await cache.get(for: key)
       state.status = .pending(progress: ())
       await cache.set(for: key, state: state)
@@ -133,7 +133,7 @@ public actor QueryClient {
               logger.error("fetch failed, exceeded retry limit: \(error)")
               throw error
             }
-            
+
             logger.warning("fetch failed, retrying: \(error)")
 
             await cache.set(for: key, state: state)
@@ -199,14 +199,14 @@ public actor QueryClient {
 
   public func setData<K: QueryKey>(for key: K, data: K.Result) async {
     await cancel(for: key)
-    
+
     var state: RequestState<K.Result, Void> = await cache.get(for: key)
     state.status = .success(value: data)
     state.finishedFetching = Date.now
     state.beganFetching = Date.now
     state.retryCount = 0
     await cache.set(for: key, state: state)
-    
+
     subject.send((key, state))
     await invalidate(key: key)
     print("set query data for \(key)")
