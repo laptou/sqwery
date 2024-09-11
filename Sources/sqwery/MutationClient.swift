@@ -52,7 +52,7 @@ public actor MutationClient {
               throw error
             }
 
-            logger.warning("mutation fail, retrying")
+            logger.warning("mutation fail, retrying: \(error)")
 
             try? await Task.sleep(for: key.retryDelay)
           }
@@ -61,7 +61,7 @@ public actor MutationClient {
       } catch is CancellationError {
         logger.debug("mutation cancelled")
       } catch {
-        logger.error("mutation fail, giving up")
+        logger.error("mutation fail, giving up: \(error)")
 
         state.queryStatus = .error(error: error)
         subject.send((AnyHashable(key), state))

@@ -50,7 +50,7 @@ public actor QueryClient {
   }
 
   public func getState<K: QueryKey>(for key: K) async -> RequestState<K.Result, Void> {
-    await cache.get(for: key)
+    await cache.getOrCreate(for: key)
   }
 
   private func unsubscribe(for key: some QueryKey) async {
@@ -102,14 +102,14 @@ public actor QueryClient {
     while !Task.isCancelled {
       logger.trace("fetch loop iter")
 
-      var state: RequestState<K.Result, Void> = await cache.get(for: key)
+      var state: RequestState<K.Result, Void> = await cache.getOrCreate(for: key)
 
       switch state.queryStatus {
       case .success, .error:
         // if we already have a success or error value, then don't replace it with pending
         // instead we just update the fetch status
         break
-      default:
+      case .idle, .pending:
         state.queryStatus = .pending(progress: ())
       }
 
@@ -117,14 +117,21 @@ public actor QueryClient {
       subject.send((key, state))
 
       do {
-        if let finishedFetching = state.finishedFetching {
-          let timeSinceFetch = Duration.seconds(Date.now.timeIntervalSince(finishedFetching))
-          logger.trace("refetch detected, result is \(timeSinceFetch) old")
-          if timeSinceFetch < key.resultLifetime {
-            logger.trace("refetch detected, result is too old, delaying")
-            try? await Task.sleep(for: key.resultLifetime - timeSinceFetch)
-            continue
+        if !state.invalidated {
+          if let finishedFetching = state.finishedFetching {
+            let timeSinceFetch = Duration.seconds(Date.now.timeIntervalSince(finishedFetching))
+            logger.trace("refetch detected, result is \(timeSinceFetch) old")
+            if timeSinceFetch < key.resultLifetime {
+              logger.trace("refetch detected, result is too fresh, delaying")
+              try? await Task.sleep(for: key.resultLifetime - timeSinceFetch)
+              continue
+            }
           }
+        } else {
+          logger.trace("invalidate detected, forcing refetch")
+
+          state.invalidated = false
+          state.retryCount = 0
         }
 
         state.beganFetching = Date.now
@@ -132,14 +139,13 @@ public actor QueryClient {
         await cache.set(for: key, state: state)
         subject.send((key, state))
 
-        state.retryCount = 0
-
         while true {
           do {
             logger.trace("running fetch function")
             let result = try await key.run(client: self)
             logger.trace("completed fetch function")
 
+            state.retryCount = 0
             state.finishedFetching = Date.now
             state.queryStatus = .success(value: result)
             state.fetchStatus = .idle
@@ -198,8 +204,11 @@ public actor QueryClient {
     }
   }
 
-  public func invalidate(key: some QueryKey) async {
-    await cache.clear(for: key)
+  public func invalidate<K: QueryKey>(key: K) async {
+    var state: RequestState<K.Result, Void> = await cache.getOrCreate(for: key)
+    state.invalidated = true
+    await cache.set(for: key, state: state)
+
     if subscriberCounts[key, default: 0] > 0 {
       await restartQuery(for: key)
     }
@@ -211,7 +220,8 @@ public actor QueryClient {
         let queryKey = key.base as! any QueryKey
         if !predicate(queryKey) { continue }
 
-        await cache.clear(for: key)
+        var state = await cache.getUntyped(for: key)
+        state?.invalidated = true
 
         if subscriberCounts[key, default: 0] > 0 {
           $0.addTask { await self.restartQuery(for: queryKey) }
@@ -222,9 +232,11 @@ public actor QueryClient {
 
   public func invalidateAll() async {
     await withDiscardingTaskGroup {
-      await cache.clearAll()
       for (key, _) in tasks {
         let queryKey = key.base as! any QueryKey
+
+        var state = await cache.getUntyped(for: key)
+        state?.invalidated = true
 
         if subscriberCounts[key, default: 0] > 0 {
           $0.addTask { await self.restartQuery(for: queryKey) }
@@ -238,7 +250,7 @@ public actor QueryClient {
     logger.info("set data for query, cancelling")
     await cancel(for: key)
 
-    var state: RequestState<K.Result, Void> = await cache.get(for: key)
+    var state: RequestState<K.Result, Void> = await cache.getOrCreate(for: key)
     state.queryStatus = .success(value: data)
     state.fetchStatus = .idle
     state.finishedFetching = Date.now

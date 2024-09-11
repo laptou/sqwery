@@ -1,5 +1,6 @@
 import Alamofire
 import Foundation
+import os
 
 public protocol HttpMutationKey: MutationKey where Result: Decodable {
   associatedtype Url: URLConvertible
@@ -47,6 +48,9 @@ public extension HttpMutationKey {
     urlRequest.httpBody = try await body(for: parameter)
     urlRequest.headers = await HTTPHeaders(headers(for: parameter))
 
+    var logger = Logger(subsystem: "sqwery", category: "mutation \(self)")
+    logger.trace("request: \(String(describing: urlRequest)) \(String(describing: urlRequest.url?.absoluteString)) \(String(describing: urlRequest.method))")
+
     var dataRequest = AF.request(urlRequest)
 
     if let validResponseCodes {
@@ -66,6 +70,7 @@ public extension HttpMutationKey {
     )
 
     let value = try await task.value
+    logger.trace("response: \(String(describing: value))")
     return value
   }
 }
