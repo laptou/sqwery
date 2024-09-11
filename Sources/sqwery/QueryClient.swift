@@ -48,9 +48,9 @@ public actor QueryClient {
       })
       .stream
   }
-  
+
   public func getState<K: QueryKey>(for key: K) async -> RequestState<K.Result, Void> {
-    return await cache.get(for: key)
+    await cache.get(for: key)
   }
 
   private func unsubscribe(for key: some QueryKey) async {
@@ -61,6 +61,9 @@ public actor QueryClient {
   }
 
   private func cancel(for key: some QueryKey) async {
+    let logger = logger(for: key)
+    logger.trace("cancelling query")
+
     tasks[key]?.cancel()
 
     // acquire lock on task to ensure that it actually cancelled
@@ -69,7 +72,15 @@ public actor QueryClient {
     semaphore.signal()
 
     tasks.removeValue(forKey: key)
-    subscriberCounts.removeValue(forKey: key)
+
+    logger.info("cancelled query")
+  }
+
+  private func logger(for key: some QueryKey) -> Logger {
+    Logger(
+      subsystem: "sqwery",
+      category: "query \(String(describing: key))"
+    )
   }
 
   private func fetchQuery<K: QueryKey>(for key: K) async {
@@ -80,11 +91,7 @@ public actor QueryClient {
       return
     }
 
-    let logger = Logger(
-      subsystem: "sqwery",
-      category: "query \(String(describing: key))"
-    )
-
+    let logger = logger(for: key)
     logger.debug("fetch loop starting")
 
     defer {
@@ -96,7 +103,7 @@ public actor QueryClient {
       logger.trace("fetch loop iter")
 
       var state: RequestState<K.Result, Void> = await cache.get(for: key)
-      
+
       switch state.queryStatus {
       case .success, .error:
         // if we already have a success or error value, then don't replace it with pending
@@ -105,7 +112,7 @@ public actor QueryClient {
       default:
         state.queryStatus = .pending(progress: ())
       }
-      
+
       await cache.set(for: key, state: state)
       subject.send((key, state))
 
@@ -142,6 +149,9 @@ public actor QueryClient {
             await key.onSuccess(client: self, result: result)
             break
           } catch {
+            // if we errored but the task was cancelled (presumably BECAUSE the task was cancelled), it doesn't count
+            if Task.isCancelled { break }
+
             state.retryCount += 1
 
             if state.retryCount >= key.retryLimit {
@@ -163,6 +173,9 @@ public actor QueryClient {
         logger.info("fetch cancelled, exiting loop")
         break
       } catch {
+        // if we errored but the task was cancelled (presumably BECAUSE the task was cancelled), it doesn't count
+        if Task.isCancelled { break }
+
         state.finishedFetching = Date.now
         state.queryStatus = .error(error: error)
         state.fetchStatus = .idle
@@ -175,8 +188,11 @@ public actor QueryClient {
     }
   }
 
-  private func restartQuery(for key: some QueryKey) {
-    tasks[key]?.cancel()
+  private func restartQuery(for key: some QueryKey) async {
+    let logger = logger(for: key)
+    logger.info("restarting query")
+
+    await cancel(for: key)
     tasks[key] = Task { [weak self] in
       await self?.fetchQuery(for: key)
     }
@@ -185,35 +201,41 @@ public actor QueryClient {
   public func invalidate(key: some QueryKey) async {
     await cache.clear(for: key)
     if subscriberCounts[key, default: 0] > 0 {
-      restartQuery(for: key)
+      await restartQuery(for: key)
     }
   }
 
   public func invalidateWhere(_ predicate: (any QueryKey) -> Bool) async {
-    for (key, _) in tasks {
-      let queryKey = key.base as! any QueryKey
-      if !predicate(queryKey) { continue }
+    await withDiscardingTaskGroup {
+      for (key, _) in tasks {
+        let queryKey = key.base as! any QueryKey
+        if !predicate(queryKey) { continue }
 
-      await cache.clear(for: key)
+        await cache.clear(for: key)
 
-      if subscriberCounts[key, default: 0] > 0 {
-        restartQuery(for: queryKey)
+        if subscriberCounts[key, default: 0] > 0 {
+          $0.addTask { await self.restartQuery(for: queryKey) }
+        }
       }
     }
   }
 
   public func invalidateAll() async {
-    await cache.clearAll()
-    for (key, _) in tasks {
-      let queryKey = key.base as! any QueryKey
+    await withDiscardingTaskGroup {
+      await cache.clearAll()
+      for (key, _) in tasks {
+        let queryKey = key.base as! any QueryKey
 
-      if subscriberCounts[key, default: 0] > 0 {
-        restartQuery(for: queryKey)
+        if subscriberCounts[key, default: 0] > 0 {
+          $0.addTask { await self.restartQuery(for: queryKey) }
+        }
       }
     }
   }
 
   public func setData<K: QueryKey>(for key: K, data: K.Result) async {
+    let logger = logger(for: key)
+    logger.info("set data for query, cancelling")
     await cancel(for: key)
 
     var state: RequestState<K.Result, Void> = await cache.get(for: key)

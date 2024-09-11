@@ -15,14 +15,14 @@ public class QueryObserver<K: QueryKey>: ObservableObject {
   init(client: QueryClient, key: K) {
     self.client = client
     self.key = key
-    self.state = RequestState()
+    state = RequestState()
 
     let task = Task { @MainActor in
       let logger = Logger(
         subsystem: "sqwery",
         category: "query \(String(describing: key))"
       )
-      
+
       self.state = await client.getState(for: key)
       logger.debug("queryobserver \(String(describing: key)) task start, status = \(String(describing: self.state.queryStatus))")
 

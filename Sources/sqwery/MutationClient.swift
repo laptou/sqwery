@@ -12,11 +12,11 @@ public actor MutationClient {
       subsystem: "sqwery",
       category: "mutation \(String(describing: key))"
     )
-    
+
     var state = RequestState<K.Result, K.Progress>()
     state.queryStatus = .pending(progress: nil)
     subject.send((AnyHashable(key), state))
-    
+
     logger.debug("mutation loop starting")
 
     Task {
@@ -28,15 +28,15 @@ public actor MutationClient {
             logger.debug("mutation cancelled")
             break
           }
-          
+
           do {
             logger.trace("running mutation")
-            
+
             let result = try await key.run(client: self, parameter: parameter, onProgress: { progress in
               state.queryStatus = .pending(progress: progress)
               self.subject.send((AnyHashable(key), state))
             })
-            
+
             logger.debug("mutation success")
 
             state.queryStatus = .success(value: result)
@@ -46,13 +46,12 @@ public actor MutationClient {
 
             break
           } catch {
-            
             state.retryCount += 1
 
             if state.retryCount >= key.retryLimit {
               throw error
             }
-            
+
             logger.warning("mutation fail, retrying")
 
             try? await Task.sleep(for: key.retryDelay)
@@ -63,7 +62,7 @@ public actor MutationClient {
         logger.debug("mutation cancelled")
       } catch {
         logger.error("mutation fail, giving up")
-        
+
         state.queryStatus = .error(error: error)
         subject.send((AnyHashable(key), state))
 
