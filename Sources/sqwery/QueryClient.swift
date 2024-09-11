@@ -48,6 +48,10 @@ public actor QueryClient {
       })
       .stream
   }
+  
+  public func getState<K: QueryKey>(for key: K) async -> RequestState<K.Result, Void> {
+    return await cache.get(for: key)
+  }
 
   private func unsubscribe(for key: some QueryKey) async {
     subscriberCounts[key, default: 1] -= 1
@@ -92,7 +96,16 @@ public actor QueryClient {
       logger.trace("fetch loop iter")
 
       var state: RequestState<K.Result, Void> = await cache.get(for: key)
-      state.status = .pending(progress: ())
+      
+      switch state.queryStatus {
+      case .success, .error:
+        // if we already have a success or error value, then don't replace it with pending
+        // instead we just update the fetch status
+        break
+      default:
+        state.queryStatus = .pending(progress: ())
+      }
+      
       await cache.set(for: key, state: state)
       subject.send((key, state))
 
@@ -108,6 +121,7 @@ public actor QueryClient {
         }
 
         state.beganFetching = Date.now
+        state.fetchStatus = .fetching
         await cache.set(for: key, state: state)
         subject.send((key, state))
 
@@ -120,7 +134,8 @@ public actor QueryClient {
             logger.trace("completed fetch function")
 
             state.finishedFetching = Date.now
-            state.status = .success(value: result)
+            state.queryStatus = .success(value: result)
+            state.fetchStatus = .idle
             await cache.set(for: key, state: state)
             subject.send((key, state))
 
@@ -149,7 +164,8 @@ public actor QueryClient {
         break
       } catch {
         state.finishedFetching = Date.now
-        state.status = .error(error: error)
+        state.queryStatus = .error(error: error)
+        state.fetchStatus = .idle
         await cache.set(for: key, state: state)
         subject.send((key, state))
 
@@ -201,7 +217,8 @@ public actor QueryClient {
     await cancel(for: key)
 
     var state: RequestState<K.Result, Void> = await cache.get(for: key)
-    state.status = .success(value: data)
+    state.queryStatus = .success(value: data)
+    state.fetchStatus = .idle
     state.finishedFetching = Date.now
     state.beganFetching = Date.now
     state.retryCount = 0

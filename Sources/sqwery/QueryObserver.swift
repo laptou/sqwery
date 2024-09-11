@@ -1,10 +1,12 @@
 import Combine
 import Foundation
+import os
 
 @MainActor
 public class QueryObserver<K: QueryKey>: ObservableObject {
-  @Published public private(set) var state: RequestState<K.Result, Void> = RequestState()
-  public var status: RequestStatus<K.Result, Void> { state.status }
+  @Published public private(set) var state: RequestState<K.Result, Void>
+  public var queryStatus: QueryStatus<K.Result, Void> { state.queryStatus }
+  public var fetchStatus: FetchStatus { state.fetchStatus }
 
   private var cancellable: AnyCancellable?
   private let client: QueryClient
@@ -13,16 +15,23 @@ public class QueryObserver<K: QueryKey>: ObservableObject {
   init(client: QueryClient, key: K) {
     self.client = client
     self.key = key
+    self.state = RequestState()
 
-    let task = Task {
-      print("queryobserver \(key) task start")
+    let task = Task { @MainActor in
+      let logger = Logger(
+        subsystem: "sqwery",
+        category: "query \(String(describing: key))"
+      )
+      
+      self.state = await client.getState(for: key)
+      logger.debug("queryobserver \(String(describing: key)) task start, status = \(String(describing: self.state.queryStatus))")
 
       for await state in await client.subscribe(for: key) {
         self.state = state
-        print("queryobserver \(key) task update, status = \(self.state.status)")
+        logger.trace("queryobserver \(String(describing: key)) task update, status = \(String(describing: self.state.queryStatus))")
       }
 
-      print("queryobserver \(key) task exit")
+      logger.debug("queryobserver \(String(describing: key)) task exit")
     }
 
     cancellable = AnyCancellable { task.cancel() }
@@ -36,7 +45,7 @@ public class QueryObserver<K: QueryKey>: ObservableObject {
 
   public func wait() async -> Result<K.Result, Error> {
     for await update in await client.subscribe(for: key) {
-      switch update.status {
+      switch update.queryStatus {
       case let .success(value: value): return .success(value)
       case let .error(error: error): return .failure(error)
       default: continue

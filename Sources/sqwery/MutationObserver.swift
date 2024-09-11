@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 public class MutationObserver<K: MutationKey>: ObservableObject {
   @Published public private(set) var state = RequestState<K.Result, K.Progress>()
-  public var status: RequestStatus<K.Result, K.Progress> { state.status }
+  public var mutationStatus: QueryStatus<K.Result, K.Progress> { state.queryStatus }
 
   private var cancellable: AnyCancellable?
   private let client: MutationClient
@@ -38,7 +38,7 @@ public class MutationObserver<K: MutationKey>: ObservableObject {
     for await state in await client.mutate(key, parameter: parameter) {
       self.state = state
 
-      switch state.status {
+      switch state.queryStatus {
       case let .success(value: value):
         return .success(value)
       case let .error(error: error):

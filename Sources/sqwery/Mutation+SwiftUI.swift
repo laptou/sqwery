@@ -13,8 +13,8 @@ public struct Mutation<K: MutationKey>: DynamicProperty {
     _observer = StateObject(wrappedValue: MutationObserver(client: MutationClient.shared, key: key))
   }
 
-  public var projectedValue: RequestStatus<K.Result, K.Progress> {
-    observer.status
+  public var projectedValue: QueryStatus<K.Result, K.Progress> {
+    observer.mutationStatus
   }
 
   public var wrappedValue: MutationObserver<K> {

@@ -4,10 +4,16 @@ public struct RequestState<Result, Progress> {
   var beganFetching: Date?
   var finishedFetching: Date?
   var retryCount: Int = 0
-  public var status: RequestStatus<Result, Progress> = .idle
+  public var queryStatus: QueryStatus<Result, Progress> = .idle
+  public var fetchStatus: FetchStatus = .idle
 }
 
-public enum RequestStatus<Result, Progress> {
+public enum FetchStatus {
+  case fetching
+  case idle
+}
+
+public enum QueryStatus<Result, Progress> {
   case success(value: Result)
   case error(error: any Error)
   case pending(progress: Progress?)

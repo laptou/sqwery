@@ -8,7 +8,7 @@ public actor MutationClient {
 
   public func mutate<K: MutationKey>(_ key: K, parameter: K.Parameter) async -> AsyncStream<RequestState<K.Result, K.Progress>> {
     var state = RequestState<K.Result, K.Progress>()
-    state.status = .pending(progress: nil)
+    state.queryStatus = .pending(progress: nil)
     subject.send((AnyHashable(key), state))
 
     Task {
@@ -18,11 +18,11 @@ public actor MutationClient {
         while true {
           do {
             let result = try await key.run(client: self, parameter: parameter, onProgress: { progress in
-              state.status = .pending(progress: progress)
+              state.queryStatus = .pending(progress: progress)
               self.subject.send((AnyHashable(key), state))
             })
 
-            state.status = .success(value: result)
+            state.queryStatus = .success(value: result)
             subject.send((AnyHashable(key), state))
 
             await key.onSuccess(client: self, parameter: parameter, result: result)
@@ -40,7 +40,7 @@ public actor MutationClient {
         }
 
       } catch {
-        state.status = .error(error: error)
+        state.queryStatus = .error(error: error)
         subject.send((AnyHashable(key), state))
 
         await key.onError(client: self, parameter: parameter, error: error)
