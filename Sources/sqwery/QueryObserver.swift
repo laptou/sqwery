@@ -23,34 +23,34 @@ public class QueryObserver<K: QueryKey>: ObservableObject {
     self.client = client
     self.key = key
     state = RequestState()
-    
-    self.subscribe()
+
+    subscribe()
   }
-  
+
   func subscribe() {
-    let key = self.key
-    
+    let key = key
+
     if let cancellable {
       cancellable.cancel()
     }
-    
+
     let task = Task { @MainActor in
       let logger = Logger(
         subsystem: "sqwery",
         category: "query \(String(describing: key))"
       )
-      
+
       self.state = await client.getState(for: key)
       logger.debug("queryobserver \(String(describing: key)) task start, status = \(String(describing: self.state.queryStatus))")
-      
+
       for await state in await client.subscribe(for: key) {
         self.state = state
         logger.trace("queryobserver \(String(describing: key)) task update, status = \(String(describing: self.state.queryStatus))")
       }
-      
+
       logger.debug("queryobserver \(String(describing: key)) task exit")
     }
-    
+
     cancellable = AnyCancellable { task.cancel() }
   }
 
