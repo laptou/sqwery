@@ -25,7 +25,7 @@ struct UserQuery: QueryKey {
     var retryDelay: Duration { .seconds(5) }
     var retryLimit: Int { 3 }
     
-    func run() async throws -> User {
+    func run(client: QueryClient) async throws -> User {
         // Fetch user data from an API
         let url = URL(string: "https://api.example.com/users/\(userId)")!
         let (data, _) = try await URLSession.shared.data(from: url)
